@@ -1,0 +1,1130 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Response Path App</title>
+
+<link rel="stylesheet" type="text/css" href="lib/jquery/jquery-ui.min.css">
+<link rel="stylesheet" type="text/css" href="lib/jquery/jquery.dataTables.css"/>
+<link rel="stylesheet" type="text/css" href="lib/jquery/colReorder.jqueryui.css"/>
+<link rel="stylesheet" type="text/css" href="lib/jquery/select.dataTables.min.css"/>
+<link rel="stylesheet" type="text/css" href="lib/jquery/buttons.dataTables.min.css"/>
+<link rel="stylesheet" type="text/css" href="themes/datatable/CAPC_datatable.css"/>
+
+<script type="text/javascript" src="lib/jquery/jquery-1.11.2.min.js"></script>
+<script type="text/javascript" src="lib/jquery/jquery-ui.min.js"></script>
+<script type="text/javascript" src="lib/jquery/jquery.dataTables.min.js"></script>
+<script type="text/javascript" src="lib/jquery/dataTables.colReorder.min.js"></script>
+<script type="text/javascript" src="lib/jquery/dataTables.select.min.js"></script>
+<script type="text/javascript" src="lib/jquery/dataTables.buttons.min.js"></script>
+<script type="text/javascript" src="lib/jquery/buttons.colVis.min.js"></script>
+<script type="text/javascript" src="lib/jquery/buttons.html5.min.js"></script>
+<script type="text/javascript" src="lib/caHelperFunctions.js"></script>
+ 
+
+<script type="text/javascript">
+
+var testTypeWS = { 
+   'DNS' : 'ResponsePathDns',
+   'IcmpEcho' : 'ResponsePathIcmp',
+   'IcmpPathEcho' : 'ResponsePathEcho',
+   'ICMPJitter' : 'ResponsePathICMPJitter',
+   'HTTP' : 'ResponsePathHttp',
+   'TCP' : 'ResponsePathTcp',
+   'Jitter' : 'ResponsePathJitter'
+};
+var testTypeMF = { 
+   'DNS' : 'dnsmf',
+   'IcmpEcho' : 'icmpmf',
+   'IcmpPathEcho' : 'pathechomf',
+   'ICMPJitter' : 'icmpjittermf',
+   'HTTP' : 'httpmf',
+   'TCP' : 'tcpmf',
+   'Jitter' : 'jittermf'
+};
+var testType = "none";	
+var testType = "none";	
+var rp = [];
+var profiles = [];
+var profile_id = "";
+var contextDevices = {};
+var ipDomain = {};
+var discoveredTests_dt;
+var managedTests_dt;
+var common_columns = [ "ID", "DeviceItemID", "IPDomainID", "Name", "TestHost", "TestHostName", "Target", "ActionType", "ItemID", "Result", "CreateTime", "Persist", "Tag", "Owner", "SourceAddress", "VrfName", "Threshold", "Frequency", "Timeout", "Description", "IsPolled", "IsPollEnabled", "IsFiltered", "IsExcludedFromReports", "IsRetired", "IndexList" ];
+var DNS_columns = [ "TargetAddressString", "NameServer" ];
+var HTTP_columns = [ "Url", "NameServer", "TypeOfService", "Operation", "HTTPVersion", "String1", "String2", "String3", "String4", "String5" ];
+var IcmpEcho_columns = [ "TargetAddress", "TypeOfService", "RequestSize" ];
+var IcmpPathEcho_columns = [ "TargetAddress", "TypeOfService", "RequestSize" ];
+var ICMPJitter_columns = [ "TargetAddress", "TypeOfService", "Interval", "NumPackets" ];
+var Jitter_columns = [ "TargetAddress", "SourcePort", "TargetPort", "TypeOfService", "Interval", "NumPackets", "RequestSize", "ResponseSize", "CodecType", "CodecInterval", "CodecPayload", "CodecNumPackets", "ICPIFAdvFactor" ];
+var TCP_columns = [ "TargetAddress", "SourcePort", "TargetPort", "ControlEnable", "TypeOfService" ];
+var hidden_columns = [ "ID", "DeviceItemID", "ItemID", "TestHostName", "Result", "TypeOfService", "CodecInterval", "CodecPayload", "CodecNumPackets", "ICPIFAdvFactor", "HTTPVersion", "String2", "String3", "String4", "String5", "RequestSize", "ResponseSize", "IsPolled", "IsPollEnabled", "IsFiltered", "IsExcludedFromReports", "IsRetired", "IndexList" ];
+var applicable_columns = []; 
+var visible_columns = [];
+var showNonPolled = "";
+var showErrors = "";
+var noTestCreate = false;
+var noTestHostMessage = false;
+
+load_ipdomains();
+load_context_devices();
+
+function load_ipdomains() {
+   // get current IP Domains from DA
+   $.ajax({
+      url: '/pc/da/rest/ipdomains',
+      processData: false,
+      dataType: 'xml',
+      cache: false,
+      success: function( xml ) {
+         $("#attr_IPDomainID").html("");
+         $(xml).find('IPDomain').each(function() {
+            var domainID = $(this).find('ID').text();
+            ipDomain[domainID] = { 
+               "Name": $(this).find('Name').text(),
+               "Description": $(this).find('Description').text()
+            };
+            $("#attr_IPDomainID").append("<option value='"+domainID+"' title='"+ipDomain[domainID]['Description']+"'>"+ipDomain[domainID]['Name']+"</option>");
+         });
+      }
+   });
+}
+
+function load_context_devices() {
+   // get devices basic info for selected group or device context
+   // device context
+   if (getQueryVariable('ItemTypeName') == "device" && getQueryVariable('ItemIdDA') != undefined) var url = "/pc/odata/api/devices?$format=json&$top=10000&$select=ID,IPDomainID,Name,PrimaryIPAddress&$filter=((ID%20eq%20"+getQueryVariable('ItemIdDA')+")%20and%20(substringof(%27SNMP%27,%20SupportedProtocols)%20eq%20true)%20and%20(PolledItemCount%20gt%200))";
+   // group context
+   else if (getQueryVariable('ItemTypeName') == "group" && getQueryVariable('ItemIdDA') != undefined) var url = "/pc/odata/api/devices?$format=json&$top=10000&$select=ID,IPDomainID,Name,PrimaryIPAddress&$filter=((groups/ID%20eq%20"+getQueryVariable('ItemIdDA')+")%20and%20(substringof(%27SNMP%27,%20SupportedProtocols)%20eq%20true)%20and%20(PolledItemCount%20gt%200))";
+   // return all devices (testing)
+   else if (getQueryVariable('ItemTypeName') == "all") var url = "/pc/odata/api/devices?$format=json&$top=10000&$select=ID,IPDomainID,Name,PrimaryIPAddress&$filter=((substringof(%27SNMP%27,%20SupportedProtocols)%20eq%20true)%20and%20(PolledItemCount%20gt%200))";
+   else return;
+
+   $.ajax({
+      url: url,
+      cache: false,
+      success: function( response ) {
+         $(response.d.results).each( function () {
+            contextDevices[this.ID] = { "IPDomainID": this.IPDomainID, "Name": this.Name, "IP": this.PrimaryIPAddress };
+            load_context_snmpset(this.ID);
+         });
+         if ($(response.d.results).length==0) {
+            noTestHostMessage = true;
+            $("#noTestHost").show();
+            $("#typeprompt").hide();
+            $("#discoveredTests").hide();
+            $("#managedTests").hide();
+            if (getQueryVariable('ItemTypeName') == "device")
+               $("#noTestHostMessage").html("<b>Error:</b> The selected item is not valid.<br>Select an SNMP device managed by Data Aggregator.");
+            else
+               $("#noTestHostMessage").html("<b>Error:</b> The selected group does not contain any valid device.<br>Ensure SNMP devices managed by Data Aggregator are included in the selected group.");
+         }
+         initialCheck();
+         console.log("Completed loading relevant devices info");
+      },
+      error: function(jqXHR, textStatus, errorThrown) {
+         console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
+      }
+   });
+}
+
+function load_context_snmpset(itemID) {
+   $.ajax({
+      url: "/pc/da/rest/devices/manageable/"+itemID,
+      processData: false,
+      dataType: 'xml',
+      cache: false,
+      success: function( xml ) {
+         if ($(xml).find("RWSNMPProfileID").length > 0) {
+            contextDevices[itemID]["SNMPSet"] = true;
+         } else {
+            contextDevices[itemID]["SNMPSet"] = false;
+         }
+         var processedSNMP = 0;
+         $.each(contextDevices, function() { if (this["SNMPSet"] != undefined) processedSNMP++; });
+         if (Object.keys(contextDevices).length == processedSNMP) {
+            found = false;
+            $.each(contextDevices, function () {
+               if (this["SNMPSet"] == true) { 
+                  found = true;
+                  return;
+               }
+            });
+            if (!found) {
+               noTestCreate = true;
+               noTestHostMessage = true;
+               $("#noTestHost").show();
+               if (getQueryVariable('ItemTypeName') == "device")
+                  $("#noTestHostMessage").html("<b>Warning:</b> The selected host is not configured with SNMP Set.<br>Ensure the device is properly configured and that a SNMP Set profile is applied to it.<br>You will only be able to see existing tests, not create or modify anything.");
+               else
+                  $("#noTestHostMessage").html("<b>Warning:</b> No device in the selected group is configured with SNMP Set.<br>Ensure the devices are properly configured and that a SNMP Set profile is applied to them.<br>You will only be able to see existing tests, not create or modify anything.");
+            }
+         }
+      },
+      error: function(jqXHR, textStatus, errorThrown) {
+         contextDevices[itemID]["SNMPSet"] = false;
+         console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
+      }
+   });
+}
+
+//runs when page displays to validate if any device supports any of the Response Path metric families
+function initialCheck() {
+
+      // get list of devices supporting the RP MF from DA OpenAPI
+      $.ajax({
+         url: "/pc/odata/api/metricfamilyhistories?$format=json&$top=1000&$expand=device&$select=device/ID,device/Name,device/PrimaryIPAddress&$filter=(((MetricFamilyID%20eq%20%27"+Object.values(testTypeMF).join("%27)%20or%20(MetricFamilyID%20eq%20%27")+"%27))%20and%20(Status%20eq%20%27SUPPORTED%27))",
+         cache: false,
+         success: function( response ) {
+            found = false;
+            $(response.d.results).each( function () {
+               // look for devices in context of selected group/device
+               if (Object.keys(contextDevices).indexOf(this.device.ID) != -1) {
+                  found = true;
+                  return;
+               }
+            });
+            if (!found && !noTestHostMessage) {
+               noTestCreate = true;
+               noTestHostMessage = true;
+               $("#noTestHost").show();
+               $("#typeprompt").hide();
+               $("#discoveredTests").hide();
+               $("#managedTests").hide();
+               if (getQueryVariable('ItemTypeName') == "device")
+                  $("#noTestHostMessage").html("<b>Warning:</b> Response Path tests are not supported on this device.<br>Ensure the device is properly configured and that a monitoring profile that includes Response Path is applied to it.<br>You will only be able to see existing tests, not create or modify anything.");
+               else
+                  $("#noTestHostMessage").html("<b>Warning:</b> Response Path tests are not supported on any device in this group.<br>Ensure the devices are properly configured and that a monitoring profile that includes Response Path is applied to them.<br>You will only be able to see existing tests, not create or modify anything.");
+            }
+         }
+      });
+}
+
+function updateType() {
+   // Keep status of current show/hide radio buttons if already displayed
+   showNonPolled = $("[name='allOrPolled']:checked").val();
+   showErrors = $("[name='allOrSuccess']:checked").val();
+
+   if (testType == "none") {
+      $('#discoveredTests').hide();
+      $('#managedTests').hide();
+      return;
+   } else {
+      $("#submit_TestType").val(testType);
+      $('#discoveredTests').show();
+      $('#discoveredTests_wrapper').html('<table id="discoveredTests_table" class="dataTable"><tr><td>Loading ...</td></tr></table>');
+      $('#managedTests').show();
+      $('#managedTests_wrapper').html('<table id="managedTests_table" class="dataTable"><tr><td>Loading ...</td></tr></table>');
+      common_columns.forEach( function(val) {
+         applicable_columns.push(val+":name");
+         if (hidden_columns.indexOf(val) == -1) visible_columns.push(val+":name");
+      });
+      eval(testType+'_columns').forEach( function(val) {
+         applicable_columns.push(val+":name");
+         if (hidden_columns.indexOf(val) == -1) visible_columns.push(val+":name");
+      });
+      
+      $("#testProfile").hide();
+
+      // get list of devices supporting this MF from DA OpenAPI
+      $.ajax({
+         url: "/pc/odata/api/metricfamilyhistories?$format=json&$top=1000&$expand=device&$select=device/ID,device/Name,device/PrimaryIPAddress&$filter=((MetricFamilyID%20eq%20%27"+testTypeMF[testType]+"%27)%20and%20(Status%20eq%20%27SUPPORTED%27))",
+         cache: false,
+         success: function( response ) {
+            $("#attr_TestHost").html("");
+            $(response.d.results).each( function () {
+               // discard all devices not in context of selected group/device
+               if (Object.keys(contextDevices).indexOf(this.device.ID) == -1) return;
+               if (contextDevices[this.device.ID]["SNMPSet"] != true) {
+                  return;
+               }
+               $("#attr_TestHost").append("<option value='"+ this.device.ID +"' hostip='"+ this.device.PrimaryIPAddress +"'>"+ this.device.Name + " (" + this.device.PrimaryIPAddress +")</option>");
+            });
+            if ($("#attr_TestHost option").length == 0) {
+               $("#noTestHost").show();
+               if (getQueryVariable('ItemTypeName') == "device" && !noTestHostMessage) {
+                  if (!noTestHostMessage) $("#noTestHostMessage").html("Warning: The selected test type is not supported on this device.<br>Ensure the device is properly configured and that a monitoring profile that includes "+$("#testType option:selected").text()+" Tests is applied to it.<br>You will only be able to see existing tests, not create or modify anything.");
+               } else if (getQueryVariable('ItemTypeName') == "group" && !noTestHostMessage) 
+                  if (!noTestHostMessage) $("#noTestHostMessage").html("<b>Warning:</b> The selected test type is not supported on any device in this group, or the devices are not configured with SNMP Set.<br>Ensure the devices are properly configured, that a monitoring profile that includes "+$("#testType option:selected").text()+" Tests is applied to them and that a SNMP Set profile is applied to them.<br>You will only be able to see existing tests, not create or modify anything.");
+               else 
+                  $("#noTestHostMessage").html("<b>Error:</b> Invalid parameters, please review App Settings.");
+            } else {
+               $("#noTestHost").hide();
+            }
+            display_discovered_tests();
+            display_managed_profiles();
+         },
+         error: function(jqXHR, textStatus, errorThrown) {
+            console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
+         }
+      });
+   }
+}
+
+function display_discovered_tests() {
+      // get currently discovered/polled tests from DA
+      $.ajax({
+         url: '/pc/da/rest/' + testTypeWS[testType],
+         processData: false,
+         dataType: 'xml',
+         cache: false,
+         success: function( xml ) {
+            rp = [];
+            i=0;
+            $(xml).find(testTypeWS[testType]).each(function() {
+               // discard all devices not in context of selected group/device
+               if (Object.keys(contextDevices).indexOf($(this).find('DeviceItemID').text()) == -1) return;
+               rp[i] = {
+                  "ID": $(this).find('ID').text(),
+                  "DeviceItemID": $(this).find('DeviceItemID').text(),
+                  "TestHost": contextDevices[$(this).find('DeviceItemID').text()].IP,
+                  "Target": $(this).find('Target').text(),
+                  "Name": $(this).find('Name').text(),
+                  "Description": $(this).find('Description').text(),
+                  "CreateTime": $(this).find('CreateTime').text(),
+                  "IsPolled": $(this).find('IsPolled').text(),
+                  "IsPollEnabled": $(this).find('IsPollEnabled').text(),
+                  "IsFiltered": $(this).find('IsFiltered').text(),
+                  "IsExcludedFromReports": $(this).find('IsExcludedFromReports').text(),
+                  "IsRetired": ($(this).find('Retired').length == 0?"false":"true"),
+                  "IndexList": $(this).find('IndexList').first().text(),
+                  "SourceAddress": $(this).find('SourceAddress').text(),
+                  "Owner": $(this).find('Owner').text(),
+                  "Tag": $(this).find('Tag').text(),
+                  "Threshold": $(this).find('Threshold').text(),
+                  "Frequency": $(this).find('Frequency').text(),
+                  "Timeout": $(this).find('Timeout').text(),
+                  "TypeOfService": $(this).find('TypeOfService').text(),
+                  "VrfName": $(this).find('VrfName').text(),
+                  "Persist": $(this).find('Persist').text(),
+                  "Interval": $(this).find('Interval').text(),
+                  "NumPackets": $(this).find('NumPackets').text(),
+                  "RequestSize": $(this).find('RequestSize').text(),
+                  "ResponseSize": $(this).find('ResponseSize').text(),
+                  "SourcePort": $(this).find('SourcePort').text(),
+                  "TargetPort": $(this).find('TargetPort').text(),
+                  "ControlEnable": $(this).find('ControlEnable').text(),
+                  "CodecType": $(this).find('CodecType').text(),
+                  "CodecInterval": $(this).find('CodecInterval').text(),
+                  "CodecPayload": $(this).find('TargetPort').text(),
+                  "CodecNumPackets": $(this).find('CodecNumPackets').text(),
+                  "ICPIFAdvFactor": $(this).find('ICPIFAdvFactor').text(),
+                  "NameServer": $(this).find('NameServer').text(),
+                  "Operation": $(this).find('Operation').text(),
+                  "HTTPVersion": $(this).find('HTTPVersion').text(),
+                  "String1": $(this).find('String1').text(),
+                  "String2": $(this).find('String2').text(),
+                  "String3": $(this).find('String3').text(),
+                  "String4": $(this).find('String4').text(),
+                  "String5": $(this).find('String5').text()
+               };
+
+               i++;
+            });
+
+            discoveredTests_dt = $('#discoveredTests_table').DataTable( {
+               data: rp,
+               dom: 'Bfrtipl',
+               select: { style: 'os' },
+               buttons: [ 
+                  {
+                     extend: 'colvis',
+                     text: 'Columns',
+                     columns: applicable_columns
+                  },
+                  {
+                     extend: 'csvHtml5',
+                     text: 'Export'
+                  },
+                  {
+                     text: 'Create New',
+                     action: function ( e, dt, node, config ) {
+                        create_test();
+                     },
+                     name: 'create',
+                     enabled: !noTestCreate
+                  },
+                  {
+                     text: 'Duplicate',
+                     action: function ( e, dt, node, config ) {
+                        duplicate_test(dt.row({selected: true}).data(), "discovered");
+                     },
+                     name: 'duplicate',
+                     enabled: false
+                  },
+                  {
+                     text: 'Edit',
+                     action: function ( e, dt, node, config ) {
+                        update_test(dt.row({selected: true}).data());
+                     },
+                     name: 'edit',
+                     enabled: false
+                  },
+                  {
+                     text: 'Delete',
+                     action: function ( e, dt, node, config ) {
+                        delete_tests(dt.rows({selected: true}).data(), dt);
+                     },
+                     name: 'delete',
+                     enabled: false
+                  }
+               ],
+	       colReorder: true,
+	       pagingType: "full_numbers",
+               lengthMenu: [[10, 25, 100, 500, -1], [10, 25, 100, 500, "All"]],
+	       pageLength : 25,
+               language: {
+                  emptyTable: "No Data To Display",
+                  lengthMenu: "Max Per Page _MENU_",
+                  info: "Displaying _START_ - _END_ of _TOTAL_",
+                  infoEmpty: "Displaying 0 - 0 of 0",
+                  search: "",
+                  searchPlaceholder: "Search",
+                  zeroRecords: "No Data To Display (For Current Filters)"
+               },
+               order: [[ 1, 'asc' ], [ 2, 'asc' ]],
+               columns: [
+                  { "data": "ID", "name": "ItemID", "title": "Item ID" },
+                  { "data": "Name", "name": "Name", "title": "Name" },
+                  { "data": "Description", "name": "Description", "title": "Description" },
+                  { "data": "DeviceItemID", "name": "DeviceItemID", "title": "Test Host Item ID" },
+                  { "data": "TestHost", "name": "TestHost", "title": "Test Host",
+                    "render": function ( data, type, row, meta ) {
+                       return '<a href="/pc/redirector?SourceType=262144&LocalID='+row.DeviceItemID+'" target="_parent">'+data+'</a>';
+                    } 
+                  },
+                  { "data": "TestHost", "name": "TestHostName", "title": "Test Host Name",
+                    "render": function ( data, type, row, meta ) {
+                       if (contextDevices[row.DeviceItemID] != undefined && contextDevices[row.DeviceItemID].Name != "")
+                          return '<a href="/pc/redirector?SourceType=262144&LocalID='+row.DeviceItemID+'" target="_parent">'+contextDevices[row.DeviceItemID].Name+'</a>';
+                       else return '<a href="/pc/redirector?SourceType=262144&LocalID='+row.DeviceItemID+'" target="_parent">'+data+'</a>';;
+                    } 
+                  },
+                  { "data": "Target", "name": "Target", "title": "Target" },
+                  { "data": "CreateTime", "name": "CreateTime", "title": "Create Time" },
+                  { "data": "IsPolled", "name": "IsPolled", "title": "Polled" },
+                  { "data": "IsPollEnabled", "name": "IsPollEnabled", "title": "Poll Enabled", "visible": false },
+                  { "data": "IsFiltered", "name": "IsFiltered", "title": "Filtered", "visible": false },
+                  { "data": "IsExcludedFromReports", "name": "IsExcludedFromReports", "title": "Excludedi From Reports", "visible": false },
+                  { "data": "IsRetired", "name": "IsRetired", "title": "Retired", "visible": false },
+                  { "data": "IndexList", "name": "Index", "title": "Index" },
+                  { "data": "Tag", "name": "Tag", "title": "Tag" },
+                  { "data": "Owner", "name": "Owner", "title": "Owner" },
+                  { "data": "SourceAddress", "name": "SourceAddress", "title": "Source" },
+                  { "data": "VrfName", "name": "VrfName", "title": "VRF Name" },
+                  { "data": "SourcePort", "name": "SourcePort", "title": "Source Port" },
+                  { "data": "TargetPort", "name": "TargetPort", "title": "Target Port" },
+                  { "data": "ControlEnable", "name": "ControlEnable", "title": "Control Enabled" },
+                  { "data": "TypeOfService", "name": "TypeOfService", "title": "Type Of Service" },
+                  { "data": "NameServer", "name": "NameServer", "title": "NameServer" },
+                  { "data": "CodecType", "name": "CodecType", "title": "CodecType" },
+                  { "data": "CodecInterval", "name": "CodecInterval", "title": "CodecInterval" },
+                  { "data": "CodecPayload", "name": "CodecPayload", "title": "CodecPayload" },
+                  { "data": "CodecNumPackets", "name": "CodecNumPackets", "title": "CodecNumPackets" },
+                  { "data": "ICPIFAdvFactor", "name": "ICPIFAdvFactor", "title": "ICPIFAdvFactor" },
+                  { "data": "Operation", "name": "Operation", "title": "Operation" },
+                  { "data": "HTTPVersion", "name": "HTTPVersion", "title": "HTTP Version" },
+                  { "data": "String1", "name": "String1", "title": "String1" },
+                  { "data": "String2", "name": "String2", "title": "String2" },
+                  { "data": "String3", "name": "String3", "title": "String3" },
+                  { "data": "String4", "name": "String4", "title": "String4" },
+                  { "data": "String5", "name": "String5", "title": "String5" },
+                  { "data": "Threshold", "name": "Threshold", "title": "Threshold" },
+                  { "data": "Frequency", "name": "Frequency", "title": "Frequency" },
+                  { "data": "Timeout", "name": "Timeout", "title": "Timeout" },
+                  { "data": "Interval", "name": "Interval", "title": "Interval" },
+                  { "data": "NumPackets", "name": "NumPackets", "title": "# Packets" },
+                  { "data": "RequestSize", "name": "RequestSize", "title": "RequestSize" },
+                  { "data": "ResponseSize", "name": "ResponseSize", "title": "ResponseSize" }
+               ],
+               autoWidth: false,
+               destroy: true
+            } );
+
+            discoveredTests_dt.on( 'select.dt deselect.dt', function (e, dt, type, indexes) {
+               var selection_count = dt.rows( { selected: true } ).count();
+               dt.button( 'delete:name' ).enable((selection_count >= 1 && !noTestCreate) ? true : false);
+               dt.button( 'edit:name' ).enable((selection_count == 1 && !noTestCreate) ? true : false);
+               dt.button( 'duplicate:name' ).enable((selection_count == 1 && !noTestCreate) ? true : false);
+            } );
+
+            discoveredTests_dt.on( 'draw.dt column-visibility.dt', function () {
+               $("#discoveredTests").css("width", "");
+               $("#discoveredTests").css("width", $("#discoveredTests_table").outerWidth()+"px");
+            } );
+
+            $("#discoveredTests .dt-buttons").append("<span class='allOrPolledFilter'><input type='radio' name='allOrPolled' value='all'"+(showNonPolled=="all"?" checked":"")+">ALL<br><input type='radio' name='allOrPolled' value='polled'"+(showNonPolled!="all"?" checked":"")+">Polled Only</span>");
+            $("[name='allOrPolled']").on('change', function () {
+               if (this.value == "all") { 
+                  discoveredTests_dt.column('IsPolled:name')
+                     .visible(true)
+                     .search('')
+                     .draw();
+               } else {
+                  discoveredTests_dt.column('IsPolled:name')
+                     .visible(false)
+                     .search('true')
+                     .draw();
+               }
+            });
+
+            discoveredTests_dt.columns().visible(false);
+            discoveredTests_dt.columns(visible_columns).visible(true);
+            $("[name='allOrPolled']:checked").trigger("change"); // apply show/hide non-polled
+            discoveredTests_dt.draw();
+         },
+         error: function(jqXHR, textStatus, errorThrown) {
+            console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
+         }
+      });
+}
+
+function display_managed_profiles() {
+      // get RTT Profiles from DA
+      $.ajax({
+         url: '/pc/da/rest/rttProfiles/' + testType,
+         processData: false,
+         dataType: 'xml',
+         cache: false,
+         success: function( xml ) {
+            profiles = [];
+            i=0;
+            $(xml).find(testType+"RoundTripTestProfile").each(function() {
+               // discard all devices not in context of selected group/device
+               var found=false;
+               var aProfile = this;
+               $.each(contextDevices, function (ID, device) {
+                  if (device.IPDomainID == $(aProfile).find('IPDomainID').text() && device.IP == $(aProfile).find('TestHost').text()) found=true;
+               });
+               if (!found) return;
+               profiles[i] = {
+                  "ID": $(this).find('ID').text(),
+                  "IPDomainID": $(this).find('IPDomainID').text(),
+                  "TestHost": $(this).find('TestHost').text(),
+                  "TargetAddress": $(this).find('TargetAddress').text(),
+                  "TargetAddressString": $(this).find('TargetAddressString').text(),
+                  "Url": $(this).find('Url').text(),
+                  "ActionType": $(this).find('ActionType').text(),
+                  "Result": $(this).find('Result').first().text(),
+                  "Name": $(this).find('Name').text(),
+                  "ItemID": $(this).find('ItemID').text(),
+                  "CreateTime": $(this).find('CreateTime').text(),
+                  "SourceAddress": $(this).find('SourceAddress').text(),
+                  "Owner": $(this).find('Owner').text(),
+                  "Tag": $(this).find('Tag').text(),
+                  "Threshold": $(this).find('Threshold').text(),
+                  "Frequency": $(this).find('Frequency').text(),
+                  "Timeout": $(this).find('Timeout').text(),
+                  "TypeOfService": $(this).find('TypeOfService').text(),
+                  "VrfName": $(this).find('VrfName').text(),
+                  "Persist": $(this).find('Persist').text(),
+                  "Interval": $(this).find('Interval').text(),
+                  "NumPackets": $(this).find('NumPackets').text(),
+                  "RequestSize": $(this).find('RequestSize').text(),
+                  "ResponseSize": $(this).find('ResponseSize').text(),
+                  "SourcePort": $(this).find('SourcePort').text(),
+                  "TargetPort": $(this).find('TargetPort').text(),
+                  "ControlEnable": $(this).find('ControlEnable').text(),
+                  "CodecType": $(this).find('CodecType').text(),
+                  "CodecInterval": $(this).find('CodecInterval').text(),
+                  "CodecPayload": $(this).find('TargetPort').text(),
+                  "CodecNumPackets": $(this).find('CodecNumPackets').text(),
+                  "ICPIFAdvFactor": $(this).find('ICPIFAdvFactor').text(),
+                  "NameServer": $(this).find('NameServer').text(),
+                  "Operation": $(this).find('Operation').text(),
+                  "HTTPVersion": $(this).find('HTTPVersion').text(),
+                  "String1": $(this).find('String1').text(),
+                  "String2": $(this).find('String2').text(),
+                  "String3": $(this).find('String3').text(),
+                  "String4": $(this).find('String4').text(),
+                  "String5": $(this).find('String5').text()
+               };
+               i++;
+            });
+            managedTests_dt = $('#managedTests_table').DataTable( {
+               data: profiles,
+               dom: 'Bfrtipl',
+               select: { style: 'os' },
+               colReorder: true,
+               pagingType: "full_numbers",
+               lengthMenu: [[10, 25, 100, 500, -1], [10, 25, 100, 500, "All"]],
+               pageLength : 25,
+               language: {	
+                  emptyTable: "No Data To Display",
+                  lengthMenu: "Max Per Page _MENU_",
+                  info: "Displaying _START_ - _END_ of _TOTAL_",
+                  infoEmpty: "Displaying 0 - 0 of 0",
+                  search: "",
+                  searchPlaceholder: "Search",
+                  zeroRecords: "No Data To Display (For Current Filters)"
+               },
+               order: [[ 2, 'asc' ], [ 3, 'asc' ], [ 4, 'asc' ]],
+               columns: [
+                  { "data": "ID", "name": "ID", "title": "Profile ID" },
+                  { "data": "IPDomainID", "name": "IPDomainID", "title": "IP Domain",
+                    "render": function ( data, type, row, meta ) {
+                       return data != '' ? '<span title="'+ipDomain[data]['Description']+'">'+ipDomain[data]['Name']+'</span>' : data;
+                    }
+                  },
+                  { "data": "Name", "name": "Name", "title": "Name" },
+                  { "data": "TestHost", "name": "TestHost", "title": "Test Host",
+                    "render": function ( data, type, row, meta ) {
+                       var link = false;
+                       $.each(contextDevices, function (ID, device) {
+                          if (device.IPDomainID == row.IPDomainID && device.IP == data) {
+                             link = '<a href="/pc/redirector?SourceType=262144&LocalID='+device.ID+'" target="_parent">'+device.IP+'</a>';
+                             return;
+                          }
+                       });
+                       return link ? link : data;
+                    } 
+                  },
+                  { "data": "TestHost", "name": "TestHostName", "title": "Test Host Name",
+                    "render": function ( data, type, row, meta ) {
+                       var link = false;
+                       $.each(contextDevices, function (ID, device) {
+                          if (device.IPDomainID == row.IPDomainID && device.IP == row.IP) {
+                             link = '<a href="/pc/redirector?SourceType=262144&LocalID='+device.ID+'" target="_parent">'+device.Name+'</a>';
+                             return;
+                          }
+                       });
+                       return link ? link : data;
+                    } 
+                  },
+                  { "data": "TargetAddress", "name": "TargetAddress", "title": "Target" },
+                  { "data": "TargetAddressString", "name": "TargetAddressString", "title": "Target" },
+                  { "data": "Url", "name": "Url", "title": "Target" },
+                  { "data": "ActionType", "name": "ActionType", "title": "Action Type" },
+                  { "data": "ItemID", "name": "ItemID", "title": "Item ID" },
+                  { "data": "Result", "name": "Result", "title": "Result",               
+                    "render": function ( data, type, row, meta ) {
+                       if (data.match(/http:\/\/im.ca.com\/normalizer|http:\/\/im.ca.com\/certifications/))
+                          var errorText = $.grep(data.split(/\{[^}]*\}/), 
+                                                 function (item, index) { 
+                                                    return item.match(/ATTRIBUTE_NOT_SET/); 
+                                                 }, 
+                                                 true)
+                                           .join("\n")
+                                           .replace(/"/g, "");
+                       else
+                          var errorText = data;
+                       return type === 'display' && data != "SUCCESS" ?
+                       '<span title="'+errorText+'">ERROR (...)</span>' : data;
+                    } 
+                  },
+                  { "data": "CreateTime", "name": "CreateTime", "title": "Create Time" },
+                  { "data": "Persist", "name": "Persist", "title": "Persist" },
+                  { "data": "Tag", "name": "Tag", "title": "Tag" },
+                  { "data": "Owner", "name": "Owner", "title": "Owner" },
+                  { "data": "SourceAddress", "name": "SourceAddress", "title": "Source" },
+                  { "data": "VrfName", "name": "VrfName", "title": "VRF Name" },
+                  { "data": "SourcePort", "name": "SourcePort", "title": "Source Port" },
+                  { "data": "TargetPort", "name": "TargetPort", "title": "Target Port" },
+                  { "data": "ControlEnable", "name": "ControlEnable", "title": "Control Enabled" },
+                  { "data": "TypeOfService", "name": "TypeOfService", "title": "Type Of Service" },
+                  { "data": "NameServer", "name": "NameServer", "title": "NameServer" },
+                  { "data": "CodecType", "name": "CodecType", "title": "CodecType" },
+                  { "data": "CodecInterval", "name": "CodecInterval", "title": "CodecInterval" },
+                  { "data": "CodecPayload", "name": "CodecPayload", "title": "CodecPayload" },
+                  { "data": "CodecNumPackets", "name": "CodecNumPackets", "title": "CodecNumPackets" },
+                  { "data": "ICPIFAdvFactor", "name": "ICPIFAdvFactor", "title": "ICPIFAdvFactor" },
+                  { "data": "Operation", "name": "Operation", "title": "Operation",
+                    "render": function ( data, type, row, meta ) {
+                       return data == '1' ? 'GET' : 'RAW';
+                    }
+                  },
+                  { "data": "HTTPVersion", "name": "HTTPVersion", "title": "HTTP Version" },
+                  { "data": "String1", "name": "String1", "title": "String1" },
+                  { "data": "String2", "name": "String2", "title": "String2" },
+                  { "data": "String3", "name": "String3", "title": "String3" },
+                  { "data": "String4", "name": "String4", "title": "String4" },
+                  { "data": "String5", "name": "String5", "title": "String5" },
+                  { "data": "Threshold", "name": "Threshold", "title": "Threshold" },
+                  { "data": "Frequency", "name": "Frequency", "title": "Frequency" },
+                  { "data": "Timeout", "name": "Timeout", "title": "Timeout" },
+                  { "data": "Interval", "name": "Interval", "title": "Interval" },
+                  { "data": "NumPackets", "name": "NumPackets", "title": "# Packets" },
+                  { "data": "RequestSize", "name": "RequestSize", "title": "RequestSize" },
+                  { "data": "ResponseSize", "name": "ResponseSize", "title": "ResponseSize" }
+               ],
+               buttons: [
+                  {
+                     extend: 'colvis',
+                     text: 'Columns',
+                     columns: applicable_columns
+                  },
+                  {
+                     extend: 'csvHtml5',
+                     text: 'Export'
+                  },
+                  {
+                     text: 'Create New',
+                     action: function ( e, dt, node, config ) {
+                        create_test();
+                     },
+                     name: 'create',
+                     enabled: !noTestCreate
+                  },
+                  {
+                     text: 'Duplicate',
+                     action: function ( e, dt, node, config ) {
+                        duplicate_test(dt.row({selected: true}).data(), "managed");
+                     },
+                     name: 'duplicate',
+                     enabled: false
+                  }
+               ],
+               autoWidth: false,
+               destroy: true
+            } );
+
+            managedTests_dt.on( 'select.dt deselect.dt', function (e, dt, type, indexes) {
+               var selection_count = dt.rows( { selected: true } ).count();
+               dt.button( 'duplicate:name' ).enable((selection_count == 1 && !noTestCreate) ? true : false);
+            } );
+
+            managedTests_dt.on( 'draw.dt column-visibility.dt', function () {
+               $("#managedTests").css("width", "");
+               $("#managedTests").css("width", $("#managedTests_table").outerWidth()+"px");
+            } );
+
+            $("#managedTests .dt-buttons").append("<span class='allOrSuccessFilter'><input type='radio' name='allOrSuccess' value='all'"+(showErrors=="all"?" checked":"")+">ALL<br><input type='radio' name='allOrSuccess' value='success'"+(showErrors!="all"?" checked":"")+">Hide Errors</span>");
+            $("[name='allOrSuccess']").on('change', function () {
+               if (this.value == "all") { 
+                  managedTests_dt.column('Result:name')
+                     .visible(true)
+                     .search('')
+                     .draw();
+               } else {
+                  managedTests_dt.column('Result:name')
+                     .visible(false)
+                     .search('SUCCESS')
+                     .draw();
+               }
+            });
+
+            managedTests_dt.columns().visible(false);
+            managedTests_dt.columns(visible_columns).visible(true);
+            $("[name='allOrSuccess']:checked").trigger("change"); // apply show/hide errors
+            managedTests_dt.draw();
+
+         },
+         error: function(jqXHR, textStatus, errorThrown) {
+            console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
+         }
+      })
+}
+
+function delete_tests(rows_to_delete, dt) {
+   $("div.dt-buttons button").blur();
+   var tests_to_delete = [];
+   var tests_active = [];
+   var tests_retired = [];
+
+   $(rows_to_delete).each( function() {
+      tests_to_delete.push(this['ID']);
+      if (this['IsRetired'] == "true") tests_retired.push(this['ID']);
+      if (this['IsRetired'] == "false") tests_active.push(this['ID']);
+   });
+
+   if (tests_retired.length == tests_to_delete.length) { // all tests are retired already
+      if (confirm("The selected test(s) are retired. Deleting them will permanently delete all historical data.")) 
+         delete_retired_tests(tests_retired);;
+   } else if (tests_retired.length < tests_to_delete.length && tests_retired.length > 0) { // some but not all tests are retired already
+      alert("Please select either only active tests or only retired tests. Mix is not allowed.");
+      return;
+   } else { // no retired test
+      if (confirm('This will retire the selected test(s). If you want to completely delete them from the DB (including all historical data), delete the active test(s) now, then refresh the page to select the retired test(s) and click "Delete" again.'))
+         delete_tests_process(tests_active, dt);
+   }
+}
+
+function delete_tests_process(tests_to_delete_from_device, dt, action) {
+   var xml=`      <`+testType+`RoundTripTestProfile version="1.0.0">
+         <Item version="1.0.0">
+            <Name>Delete `+testType+` Test</Name>
+         </Item>
+         <AttrGroupList>`;
+   $(tests_to_delete_from_device).each( function() {
+   xml+=`
+            <AttrGroup>
+               <ActionType>DELETE</ActionType>
+               <ItemID>`+this+`</ItemID>
+            </AttrGroup>`;
+   });
+   xml+=`
+         </AttrGroupList>
+      </`+testType+`RoundTripTestProfile>`;
+   console.log(xml);
+
+   var jqxhr = $.ajax({
+      url: '/pc/da/rest/rttProfiles/' + testType,
+      type: 'POST',
+      contentType: 'application/xml',
+      processData: false,
+      data: xml,
+      dataType: 'text',
+      cache: false,
+      success: function( result, textStatus, jqXHR ) {
+         if (result.match(/<success>/)) {
+            console.log("RTT Profile delete from device request pushed");
+            profile_id=result.replace(/.*<success>([0-9]*)<\/success>.*/, "$1");
+            setTimeout(validate_submit_success, 500);
+         } else alert("Request failed: "+result);
+         updateType();
+      },
+      error: function (jqXHR, textStatus, errorThrown) {
+         if ( console && console.log ) {
+            console.log( "request to /pc/da/rest/rttProfiles/"+testType+" failed: "+textStatus+" / "+errorThrown+"\n"+jqXHR.responseText+"\n\nxml query used: \n"+xml);
+            return false;
+         }
+      }
+   });
+}
+
+function delete_retired_tests(tests_to_delete_from_da) {
+   var xml=`<DeleteList>`;
+   $(tests_to_delete_from_da).each( function () {
+      if (!(this != undefined && this.length > 0)) return;
+      else xml+=`
+               <ID>`+this+`</ID>`;
+   });
+   xml+=`
+      </DeleteList>`;
+   console.log(xml);
+
+   $.ajax({
+      url: '/pc/da/rest/retired/deletelist',
+      type: 'POST',
+      contentType: 'application/xml',
+      processData: false,
+      data: xml,
+      dataType: 'text',
+      cache: false,
+      success: function( xml ) {
+         var failed = "";
+         $(xml).find("DeleteResult").each(function() {
+            var itemID=$(this).find("ID").text();
+            if ($(this).find("Error").text().match(/SUCCESS/)) {
+               console.log("Test Item ID "+itemID+" deleted successfully");
+            } else {
+               failed += "- "+itemID+": "+$(this).find("error").text()+"\n";
+            }            
+         });
+         if (failed.length > 0) {
+            alert("The following tests could not be deleted: "+failed);
+            showNonPolled = $("[name='allOrPolled']:checked").val();
+            display_discovered_tests();
+         } else {
+            showNonPolled = $("[name='allOrPolled']:checked").val();
+            alert("Test(s) deleted successfully, please refresh this page in a few seconds to view the change in test list, if it does not automatically refresh now.");   
+            display_discovered_tests();
+         }
+      }
+   });
+}
+
+function create_test() {
+   $("#testProfileTitle").html("Create new test profile");
+   $("#testProfile").show();
+   $("#testProfile tr[testType]").hide();
+   $("#testProfile tr[testType=common]").show();
+   $("#testProfile tr[testType="+testType+"]").show();
+   $("#testProfile tr[actionType=update]").hide();
+   $("#attr_ActionType").html("");
+   $("#attr_ActionType").append("<option>CREATE</option><option>FORCE_CREATE</option>");
+   window.scrollTo(0,document.body.scrollHeight);
+   $('#attr_Name').focus();
+
+} 
+
+function duplicate_test(row_data, context) {
+   $("#testProfileTitle").html("Duplicate test profile");
+   $("#testProfile").show();
+   $("#testProfile tr[testType]").hide();
+   $("#testProfile tr[testType=common]").show();
+   $("#testProfile tr[testType="+testType+"]").show();
+   $("#testProfile tr[actionType=update]").hide();
+   load_test_data(row_data, context);
+   $("#attr_ActionType").html("");
+   $("#attr_ActionType").append("<option selected>CREATE</option><option>FORCE_CREATE</option>");
+   $("#attr_ItemID").val("");
+   window.scrollTo(0,document.body.scrollHeight);
+   $('#attr_Name').focus();
+}
+
+function update_test(row_data) {
+   $("#testProfileTitle").html("Edit test profile");
+   $("#testProfile").show();
+   $("#testProfile tr[testType]").hide();
+   $("#testProfile tr[testType=common]").show();
+   $("#testProfile tr[testType="+testType+"]").show();
+   $("#testProfile tr[actionType=new]").hide();
+   load_test_data(row_data);
+   $("#attr_ActionType").html("");
+   $("#attr_ActionType").append("<option selected>UPDATE</option>");
+   $("#attr_ItemID").val(row_data['ID']);
+   window.scrollTo(0,document.body.scrollHeight);
+   $('#attr_Name').focus();
+} 
+
+function load_test_data(row_data, context = "discovered") {
+   $.each(row_data, function(name, value) {
+      if (context == "discovered") {
+         if (name == "Name") return;
+         else if (name == "Target") {
+            if (testType == "DNS") name = "TargetAddressString";
+            else if (testType == "HTTP") name = "Url";
+            else name = "TargetAddress";
+         } else if (name == "DeviceItemID") $("#attr_TestHost").val(value);
+         else if (name == "TestHost") return;
+      } else if (context == "managed") {
+         if (name == "TestHost") {
+            $("#attr_TestHost option").each( function () {
+               if ($(this).attr('hostip') == value) this.selected = true;
+            });
+            return;
+         }
+      }
+
+      // common
+      if ($("input#attr_"+name).length) $("#attr_"+name).val(value);
+      if ($("select#attr_"+name).length && value.length) $("#attr_"+name).val(value);
+   }); 
+}
+
+function change_type() {
+   $("#testProfile tr[testType]").hide();
+   $("#testProfile tr[testType=common]").show();
+   $("#testProfile tr[testType="+$("#submit_TestType").val()+"]").show();
+   if ($("#attr_ActionType").val() == "CREATE" || $("#attr_ActionType").val() == "FORCE_CREATE")
+     $("#testProfile tr[actionType=update]").hide();
+   else if ($("#attr_ActionType").val() == "UPDATE") 
+     $("#testProfile tr[actionType=new]").hide();
+}
+
+function validate_profile () {
+   var error = false;
+   $(".mandatory:visible").each( function (index, element) {
+      if (!error && $(this).find("input,select")[0].value == "") {
+         error = "Missing mandatory field: "+$(this).find("td")[0].innerHTML;
+      }
+   });
+   
+   if (!error && $("#attr_TargetAddressString:visible").length && $("#attr_TargetAddressString").val().match(/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$|^[A-Za-z0-9._-]$/) == null) error = "Incorrect IP or hostname for Target";
+   if (!error && $("#attr_Url:visible").length && $("#attr_Url").val().match(/^[Hh][Tt][Tt][Pp][Ss]?:\/\/.+$/) == null) error = "Incorrect format for Target URL: It must start with 'http://' or 'https://'";
+   if (!error && $("#attr_TargetAddress:visible").length && $("#attr_TargetAddress").val().match(/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/) == null) error = "Incorrect IP format for Target Address";
+   if (!error && $("#attr_SourceAddress:visible").length && $("#attr_SourceAddress:visible").val().length && $("#attr_SourceAddress").val().match(/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/) == null) error = "Incorrect IP format for Source Address";
+   if (!error && $("#attr_Threshold:visible").length && $("#attr_Threshold:visible").val().length && $("#attr_Threshold").val().match(/^[0-9]*$/) == null && parseInt($("#attr_Threshold").val()) <= 2147483647) error = "Incorrect Threshold value, use an integer between 0 and 2G (milliseconds)";
+   if (!error && $("#attr_Frequency:visible").length && $("#attr_Frequency:visible").val().length && $("#attr_Frequency").val().match(/^[0-9]*$/) == null && parseInt($("#attr_Frequency").val()) <= 604800) error = "Incorrect Frequency value, use an integer between 0 and 600K (seconds)";
+   if (!error && $("#attr_Timeout:visible").length && $("#attr_Timeout:visible").val().length && $("#attr_Timeout").val().match(/^[0-9]*$/) == null && parseInt($("#attr_Timeout").val()) <= 604800000) error = "Incorrect Timeout value, use an integer between 0 and 600M (milliseconds)";
+   if (!error && $("#attr_NameServer:visible").length && $("#attr_NameServer:visible").val().length && $("#attr_NameServer").val().match(/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/) == null) error = "Incorrect IP format for Name Server";
+   if (!error && $("#attr_TypeOfService:visible").length && $("#attr_TypeOfService:visible").val().length && $("#attr_TypeOfService").val().match(/^[0-9]{1,3}$/) == null && parseInt($("#attr_ResponseSize").val()) <= 255) error = "Incorrect Type Of Service value, use an integer between 0 and 255 (octet)";
+   if (!error && $("#attr_RequestSize:visible").length && $("#attr_RequestSize:visible").val().length && $("#attr_RequestSize").val().match(/^[0-9]*$/) == null && parseInt($("#attr_RequestSize").val()) <= 16383) error = "Incorrect Request Size value, use an integer between 0 and 16383 (octets)";
+   if (!error && $("#attr_ResponseSize:visible").length && $("#attr_ResponseSize:visible").val().length && $("#attr_ResponseSize").val().match(/^[0-9]*$/) == null && parseInt($("#attr_ResponseSize").val()) <= 16383) error = "Incorrect Response Size value, use an integer between 0 and 16383 (octets)";
+   if (!error && $("#attr_Interval:visible").length && $("#attr_Interval:visible").val().length && $("#attr_Interval").val().match(/^[0-9]*$/) == null && parseInt($("#attr_Interval").val()) <= 60000) error = "Incorrect Interval value, use an integer between 0 and 60000 (milliseconds)";
+   if (!error && $("#attr_NumPackets:visible").length && $("#attr_NumPackets:visible").val().length && $("#attr_NumPackets").val().match(/^[0-9]*$/) == null && parseInt($("#attr_NumPackets").val()) <= 2147483647) error = "Incorrect Number of Packets value, use an integer between 0 and 2G";
+   if (!error && $("#attr_SourcePort:visible").length && $("#attr_SourcePort:visible").val().length && $("#attr_SourcePort").val().match(/^[0-9]*$/) == null && parseInt($("#attr_SourcePort").val()) <= 65535) error = "Incorrect Source Port value, use an integer between 0 and 65535";
+   if (!error && $("#attr_TargetPort:visible").length && $("#attr_TargetPort:visible").val().length && $("#attr_TargetPort").val().match(/^[0-9]*$/) == null && parseInt($("#attr_TargetPort").val()) <= 65535) error = "Incorrect Target Port value, use an integer between 0 and 65535";
+   if (!error && $("#attr_CodecInterval:visible").length && $("#attr_CodecInterval:visible").val().length && $("#attr_CodecInterval").val().match(/^[0-9]*$/) == null && parseInt($("#attr_CodecInterval").val()) <= 60000) error = "Incorrect Codec Interval value, use an integer between 0 and 60000 (milliseconds)";
+   if (!error && $("#attr_CodecPayload:visible").length && $("#attr_CodecPayload:visible").val().length && $("#attr_CodecPayload").val().match(/^[0-9]*$/) == null && parseInt($("#attr_CodecPayload").val()) <= 16383) error = "Incorrect Codec Payload value, use an integer between 0 and 16383 (octets)";
+   if (!error && $("#attr_CodecNumPackets:visible").length && $("#attr_CodecNumPackets:visible").val().length && $("#attr_CodecNumPackets").val().match(/^[0-9]*$/) == null && parseInt($("#attr_CodecNumPackets").val()) <= 60000) error = "Incorrect Codec Number of Packets value, use an integer between 0 and 60000";
+   if (!error && $("#attr_HTTPVersion:visible").length && $("#attr_HTTPVersion:visible").val().length && $("#attr_HTTPVersion").val().match(/^.{3-10}$/) == null) error = "Incorrect HTTP Version format, use a string in the format 'x.y', e.g. '1.2'";
+
+   if (!error) submit_profile();
+   else {
+      alert(error);
+      $("#profileSubmit").blur();
+   }
+}
+
+function submit_profile() {
+   var xml=`      <`+$("#submit_TestType").val()+`RoundTripTestProfile version="1.0.0">
+         <Item version="1.0.0">
+            <Name>`+$('#attr_Name').val()+`</Name>
+         </Item>
+         <AttrGroupList>
+            <AttrGroup>`;
+   $('[id^=attr_]:visible:not(#attr_Name)').each( function () {
+      if (this.value.length == 0) return;
+      else if (this.id == "attr_TestHost") xml+=`
+               <TestHost>`+$(this).children('option:selected').attr('hostip')+`</TestHost>`;
+      else xml+=`
+               <`+this.id.replace(/^attr_/, "")+`>`+this.value+`</`+this.id.replace(/^attr_/, "")+`>`;
+   });
+   xml+=`
+            </AttrGroup>
+         </AttrGroupList>
+      </`+$("#submit_TestType").val()+`RoundTripTestProfile>`;
+   console.log(xml);
+
+   var jqxhr = $.ajax({
+      url: '/pc/da/rest/rttProfiles/' + $("#submit_TestType").val(),
+      type: 'POST',
+      contentType: 'application/xml',
+      processData: false,
+      data: xml,
+      dataType: 'text',
+      cache: false,
+      success: function( result, textStatus, jqXHR ) {
+         if (result.match(/<success>/)) {
+            console.log("RTT Profile creation request to DA succeeded");
+            profile_id=result.replace(/.*<success>([0-9]*)<\/success>.*/, "$1");
+            setTimeout(validate_submit_success, 500);
+         } else alert("Request failed: "+result);
+      },
+      error: function (jqXHR, textStatus, errorThrown) {
+         if ( console && console.log ) {
+            console.log( "request to /pc/da/rest/rttProfiles/"+$("#submit_TestType").val()+" failed: "+textStatus+" / "+errorThrown+"\n"+jqXHR.responseText+"\n\nxml query used: \n"+xml);
+            return false;
+         }
+         alert("Request failed: "+textStatus+" / "+errorThrown);
+         $("#profileSubmit").blur();
+      }
+   });
+}
+
+function validate_submit_success() {
+   $.ajax({
+      url: '/pc/da/rest/rttProfiles/' + $("#submit_TestType").val() + '/' + profile_id,
+      processData: false,
+      dataType: 'xml',
+      cache: false,
+      success: function( xml ) {
+         $(xml).find("Result").each(function() {
+            if ($(this).text().match(/SUCCESS/)) {
+               console.log("RTT Profile pushed successfully");
+               rediscover_test_host();
+               $("#profileSubmit").blur();
+            } else if ($(this).text().match(/PENDING/)) {
+               // waiting, need to retry
+               console.log("RTT Profile PENDING - retrying in 1 sec");
+               setTimeout(validate_submit_success(),1000);
+            } else if ($(this).text().match(/http:\/\/im.ca.com\/normalizer|http:\/\/im.ca.com\/certifications/)) {
+               var errorArray = $.grep($(this).text().split(/\{[^}]*\}/), function (item, index) { return item.match(/ATTRIBUTE_NOT_SET/); }, true);
+               alert("Submit to DA succeeded but attempt to push the test to the Test Host returned the error(s): "+errorArray.join("\n"));
+               $("#profileSubmit").blur();
+            } else {
+               alert("Submit to DA succeeded but attempt to push the test to the Test Host returned the error: "+$(this).text());
+               $("#profileSubmit").blur();
+            }            
+            showErrors = $("[name='allOrSuccess']:checked").val();
+            display_managed_profiles();
+         });
+      }
+   });
+}
+
+function rediscover_test_host() {
+   alert("Change applied to the Test Host, please refresh this page in a few seconds/minutes to view the change in monitored test.");   
+}
+
+$(document).ready(function() {
+   //alert(getQueryVariable('ItemIdDA'));
+});
+</script>
+</head>
+<body>
+<div id="typeprompt">
+  Select test type: 
+  <select id="testType" onchange="testType=this.value; updateType();">
+    <option value="none" selected></option>
+    <option value="DNS">DNS</option>
+    <option value="IcmpEcho">ICMP Echo</option>
+    <option value="IcmpPathEcho">ICMP Path Echo</option>
+    <option value="ICMPJitter">ICMP Jitter</option>
+    <option value="HTTP">HTTP</option>
+    <option value="TCP">TCP</option>
+    <option value="Jitter">Jitter</option>
+  </select>
+</div>
+<div id="noTestHost" class="subcontainer">
+  <div class="boxtitle">No Valid Test Host</div>
+  <div id="noTestHostMessage"></div>
+</div>
+<div id="discoveredTests" class="subcontainer">
+  <div class="boxtitle">Tests discovered/monitored by CAPM</div>
+  <div id="discoveredTests_wrapper" class="dataTables_wrapper">
+    <table id="discoveredTests_table" class="dataTable"> </table>
+  </div>
+</div>
+<div id="managedTests" class="subcontainer">
+  <div class="boxtitle">Test profiles created in CAPM</div>
+  <div id="managedTests_wrapper" class="dataTables_wrapper">
+    <table id="managedTests_table" class="dataTable"> </table>
+  </div>
+</div>
+<div id="testProfile" class="subcontainer">
+  <div class="boxtitle" id="testProfileTitle">Create / Update test profile</div>
+  <table id="profileAttributes">
+      <tr testType="common" actionType="create" title="The type of Round-Trip test" class="mandatory"><td>Test Type</td><td>
+        <select id="submit_TestType" onchange="change_type()">
+           <option value="DNS">DNS</option>
+           <option value="IcmpEcho">ICMP Echo</option>
+           <option value="IcmpPathEcho">ICMP Path Echo</option>
+           <option value="ICMPJitter">ICMP Jitter</option>
+           <option value="HTTP">HTTP</option>
+           <option value="TCP">TCP</option>
+           <option value="Jitter">Jitter</option>
+        </select>
+      </td></tr>
+      <tr testType="common" title="The operation type of Round-Trip test" class="mandatory"><td>ActionType</td><td><select id="attr_ActionType"></select></td></tr>
+      <tr testType="common" actionType="update" class="mandatory" readonly><td>Item ID</td><td><input type="text" id="attr_ItemID" maxLength="32"/></td></tr>
+      <tr testType="common" class="mandatory" title="The IP Domain ID that this profile lives under"><td>IP Domain</td><td><select id="attr_IPDomainID"></select></td></tr>
+      <tr testType="common" class="mandatory" title="Identifies the name of the Test Profile"><td>Profile Name</td><td><input type="text" id="attr_Name" maxLength="255"/></td></tr>
+      <tr testType="common" actionType="new" class="mandatory" title="The address of the device on which the test runs.&#xa;Note: A device must have a SNMP Set profile assigned and have the selected test type discovered, before it can be selected."><td>Test Host</td><td><select id="attr_TestHost"></select></td></tr>
+      <tr testType="DNS" class="mandatory" title="A string which specifies the address of the target. This string can be in IP address format or a hostname."><td>Target IP or Hostname</td><td><input type="text" id="attr_TargetAddressString" maxLength="255"/></td></tr>
+      <tr testType="DNS" class="mandatory" title="The IP address of the name-server"><td>Name Server</td><td><input type="text" id="attr_NameServer" maxLength="15"/></td></tr>
+      <tr testType="HTTP" class="mandatory" title="A string which represents the URL to which a HTTP probe should communicate with"><td>Target URL</td><td><input type="text" id="attr_Url" maxLength="255"/></td></tr>
+      <tr testType="IcmpEcho" class="mandatory" title="The destination IP addresses of the RTT test"><td>Target IP Address</td><td><input type="text" id="attr_TargetAddress" maxLength="15"/></td></tr>
+      <tr testType="IcmpPathEcho" class="mandatory" title="The destination IP addresses of the RTT test"><td>Target IP Address</td><td><input type="text" id="attr_TargetAddress" maxLength="15"/></td></tr>
+      <tr testType="ICMPJitter" class="mandatory" title="The destination IP addresses of the RTT test"><td>Target IP Address</td><td><input type="text" id="attr_TargetAddress" maxLength="15"/></td></tr>
+      <tr testType="Jitter" class="mandatory" title="The destination IP addresses of the RTT test"><td>Target IP Address</td><td><input type="text" id="attr_TargetAddress" maxLength="15"/></td></tr>
+      <tr testType="TCP" class="mandatory" title="The destination IP addresses of the RTT test"><td>Target IP Address</td><td><input type="text" id="attr_TargetAddress" maxLength="15"/></td></tr>
+      <tr testType="common" class="mandatory" title="Indicates whether this RTT configuration is persisted to non-volatile memory on device"><td>Persist</td><td><select id="attr_Persist"><option value="true" selected>Save to NVRAM</option><option value="false">In memory only</option></select></td></tr>
+      <tr testType="common" title="A short string used for test identification in logging and notification"><td>Tag</td><td><input type="text" id="attr_Tag" maxLength="255"/></td></tr>
+      <tr testType="common" title="Specifies the test owner"><td>Owner</td><td><input type="text" id="attr_Owner" maxLength="255"/></td></tr>
+      <tr testType="common" title="The source IP addresses of the RTT test"><td>Source Address</td><td><input type="text" id="attr_SourceAddress" maxLength="15"/></td></tr>
+      <tr testType="common" title="VPN name in which the RTT operation will be used. Agent will use this field to identify the VPN routing Table for the operation"><td>VRF Name</td><td><input type="text" id="attr_VrfName" maxLength="32"/></td></tr>
+      <tr testType="common" title="Maximum time in milliseconds to wait for a response before TestHost considers it a violation"><td>Threshold</td><td><input type="text" id="attr_Threshold" maxLength="10"/></td></tr>
+      <tr testType="common" title="Duration in seconds between initiating each RTT"><td>Frequency</td><td><input type="text" id="attr_Frequency" maxLength="6"/></td></tr>
+      <tr testType="common" title="Duration in milliseconds to wait for a RTT operation completion"><td>Timeout</td><td><input type="text" id="attr_Timeout" maxLength="5"/></td></tr>
+      <tr testType="HTTP" title="Type of service octet in an IP header"><td>Type Of Service</td><td><input type="text" id="attr_TypeOfService" maxLength="3"/></td></tr>
+      <tr testType="HTTP" title="The IP address of the name-server"><td>Name Server</td><td><input type="text" id="attr_NameServer" maxLength="15"/></td></tr>
+      <tr testType="HTTP" title="An HTTP operation (httpGet[1] | httpRaw[2]) that represents the specific type of RTT operation"><td>Operation</td><td><select id="attr_Operation"><option value="1" selected>HTTP GET</option><option value="2">HTTP RAW</option></select></td></tr>
+      <tr testType="HTTP" title="A string which specifies the version number of the HTTP Server"><td>HTTP Version</td><td><input type="text" id="attr_HTTPVersion" maxLength=""/></td></tr>
+      <tr testType="HTTP" title="This string stores the content of an HTTP raw request. If the request cannot fit into String1 then it should be split and put in Strings 1 through 5."><td>String 1</td><td><input type="text" id="attr_String1" maxLength="255"/></td></tr>
+      <tr testType="HTTP" title="This is a continuation of and is concatenated with String 1"><td>String 2</td><td><input type="text" id="attr_String2" maxLength="255"/></td></tr>
+      <tr testType="HTTP" title="This is a continuation of and is concatenated with String 2"><td>String 3</td><td><input type="text" id="attr_String3" maxLength="255"/></td></tr>
+      <tr testType="HTTP" title="This is a continuation of and is concatenated with String 3"><td>String 4</td><td><input type="text" id="attr_String4" maxLength="255"/></td></tr>
+      <tr testType="HTTP" title="This is a continuation of and is concatenated with String 4"><td>String 5</td><td><input type="text" id="attr_String5" maxLength="255"/></td></tr>
+      <tr testType="IcmpEcho" title="Type of service octet in an IP header"><td>Type Of Service</td><td><input type="text" id="attr_TypeOfService" maxLength="3"/></td></tr>
+      <tr testType="IcmpEcho" title="Request probe payload size"><td>Request Size</td><td><input type="text" id="attr_RequestSize" maxLength="5"/></td></tr>
+      <tr testType="IcmpPathEcho" title="Type of service octet in an IP header"><td>Type Of Service</td><td><input type="text" id="attr_TypeOfService" maxLength="3"/></td></tr>
+      <tr testType="IcmpPathEcho" title="Request probe payload size"><td>Request Size</td><td><input type="text" id="attr_RequestSize" maxLength="5"/></td></tr>
+      <tr testType="ICMPJitter" title="Type of service octet in an IP header"><td>Type Of Service</td><td><input type="text" id="attr_TypeOfService" maxLength="3"/></td></tr>
+      <tr testType="ICMPJitter" title="Time between between packets in milliseconds"><td>Interval</td><td><input type="text" id="attr_Interval" maxLength="5"/></td></tr>
+      <tr testType="ICMPJitter" title="Number of packets that need to be transmitted"><td>Number of Packets</td><td><input type="text" id="attr_NumPackets" maxLength="10"/></td></tr>
+      <tr testType="Jitter" title="Represents the source address port number. If left unspecified a port is selected by the system."><td>Source Port</td><td><input type="text" id="attr_SourcePort" maxLength="5"/></td></tr>
+      <tr testType="Jitter" title="The destination port to which test probes are sent"><td>Target Port</td><td><input type="text" id="attr_TargetPort" maxLength="5"/></td></tr>
+      <tr testType="Jitter" title="Type of service octet in an IP header"><td>Type Of Service</td><td><input type="text" id="attr_TypeOfService" maxLength="3"/></td></tr>
+      <tr testType="Jitter" title="Time between between packets in milliseconds"><td>Interval</td><td><input type="text" id="attr_Interval" maxLength="5"/></td></tr>
+      <tr testType="Jitter" title="Number of packets that need to be transmitted"><td>Number of Packets</td><td><input type="text" id="attr_NumPackets" maxLength="5"/></td></tr>
+      <tr testType="Jitter" title="Request probe payload size"><td>Request Size</td><td><input type="text" id="attr_RequestSize" maxLength="5"/></td></tr>
+      <tr testType="Jitter" title="Response probe payload size"><td>Response Size</td><td><input type="text" id="attr_ResponseSize" maxLength="5"/></td></tr>
+      <tr testType="Jitter" title="Codec type to be used with jitter probe"><td>Codec Type</td><td><select id="attr_CodecType"><option value="0">N/A</option><option value="1">G.711 U Law</option><option value="2">G.711 A Law</option><option value="3">G.729a</option></select></td></tr>
+      <tr testType="Jitter" title="Time between between packets in milliseconds. Applicable only to jitter probe which uses CodecType."><td>Codec Interval</td><td><input type="text" id="attr_CodecInterval" maxLength="5"/></td></tr>
+      <tr testType="Jitter" title="Number of octets that needs to be placed into the Data portion of the message. Applicable only to jitter probe which uses CodecType."><td>Codec Payload</td><td><input type="text" id="attr_CodecPayload" maxLength="5"/></td></tr>
+      <tr testType="Jitter" title="Number of packets that need to be transmitted. Applicable only to jitter probe which uses CodecType."><td>Codec Number of Packets</td><td><input type="text" id="attr_CodecNumPackets"/></td></tr>
+      <tr testType="Jitter" title="Used while calculating jitter ICPIF values"><td>ICPIF Adv Factor</td><td><input type="text" id="attr_ICPIFAdvFactor" maxLength="2"/></td></tr>
+      <tr testType="TCP" title="Represents the source address port number. If left unspecified a port is selected by the system."><td>Source Port</td><td><input type="text" id="attr_SourcePort" maxLength="5"/></td></tr>
+      <tr testType="TCP" title="The destination port to which test probes are sent"><td>Target Port</td><td><input type="text" id="attr_TargetPort" maxLength="5"/></td></tr>
+      <tr testType="TCP" title="If this object is enabled, then the RTR application will send control messages to a responder, residing on the target router to respond to the data request packets being sent by the source router."><td>Control Enabled</td><td><select id="attr_ControlEnable"><option value="1" selected>Yes</option><option value="2">No</option></select></td></tr>
+      <tr testType="TCP" title="Type of service octet in an IP header"><td>Type Of Service</td><td><input type="text" id="attr_TypeOfService" maxLength="3"/></td></tr>
+  </table>
+  <button class="dt-button" type="button" id="profileSubmit" onclick="validate_profile()">Submit</button>
+  <button class="dt-button" type="button" onclick="$('#testProfile').hide();">Cancel</button>
+</div>
+</body>
+</html>
