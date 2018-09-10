@@ -386,7 +386,11 @@ function display_discovered_tests() {
                order: [[ 1, 'asc' ], [ 2, 'asc' ]],
                columns: [
                   { "data": "ID", "name": "ItemID", "title": "Item ID" },
-                  { "data": "Name", "name": "Name", "title": "Name" },
+                  { "data": "Name", "name": "Name", "title": "Name",
+                    "render": function ( data, type, row, meta ) {
+                       return '<a href="/pc/redirector?SourceType=262144&LocalID='+row.ID+'" target="_parent">'+data+'</a>';;
+                    }
+                  },
                   { "data": "Description", "name": "Description", "title": "Description" },
                   { "data": "DeviceItemID", "name": "DeviceItemID", "title": "Test Host Item ID" },
                   { "data": "TestHost", "name": "TestHost", "title": "Test Host",
