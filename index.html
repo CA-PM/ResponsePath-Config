@@ -9,6 +9,7 @@
 <link rel="stylesheet" type="text/css" href="lib/jquery/colReorder.jqueryui.css"/>
 <link rel="stylesheet" type="text/css" href="lib/jquery/select.dataTables.min.css"/>
 <link rel="stylesheet" type="text/css" href="lib/jquery/buttons.dataTables.min.css"/>
+<link rel="stylesheet" type="text/css" href="lib/nvd3/nv.d3.css"></link>
 <link rel="stylesheet" type="text/css" href="themes/datatable/CAPC_datatable.css"/>
 
 <script type="text/javascript" src="lib/jquery/jquery-1.11.2.min.js"></script>
@@ -20,6 +21,9 @@
 <script type="text/javascript" src="lib/jquery/buttons.colVis.min.js"></script>
 <script type="text/javascript" src="lib/jquery/buttons.html5.min.js"></script>
 <script type="text/javascript" src="lib/caHelperFunctions.js"></script>
+<script type="text/javascript" src="lib/d3/d3.js"></script>
+<script type="text/javascript" src="lib/nvd3/nv.d3.js"></script>
+<script type="text/javascript" src="lib/spin.js"></script>
  
 
 <script type="text/javascript">
@@ -42,7 +46,15 @@ var testTypeMF = {
    'TCP' : 'tcpmf',
    'Jitter' : 'jittermf'
 };
-var testType = "none";	
+var testTypeFaceType = { 
+   'DNS' : 'NormalizedDNSInfo',
+   'IcmpEcho' : 'NormalizedICMPInfo',
+   'IcmpPathEcho' : 'NormalizedPathEchoInfo',
+   'ICMPJitter' : 'NormalizedICMPJitterInfo',
+   'HTTP' : 'NormalizedRTTMonHTTPInfo',
+   'TCP' : 'NormalizedTCPInfo',
+   'Jitter' : 'NormalizedJitterInfo'
+};
 var testType = "none";	
 var rp = [];
 var profiles = [];
@@ -51,7 +63,8 @@ var contextDevices = {};
 var ipDomain = {};
 var discoveredTests_dt;
 var managedTests_dt;
-var common_columns = [ "ID", "DeviceItemID", "IPDomainID", "Name", "TestHost", "TestHostName", "Target", "ActionType", "ItemID", "Result", "CreateTime", "Persist", "Tag", "Owner", "SourceAddress", "VrfName", "Threshold", "Frequency", "Timeout", "Description", "IsPolled", "IsPollEnabled", "IsFiltered", "IsExcludedFromReports", "IsRetired", "IndexList" ];
+var chart;
+var common_columns = [ "ID", "Quickview", "DeviceItemID", "IPDomainID", "Name", "TestHost", "TestHostName", "Target", "ActionType", "ItemID", "Result", "CreateTime", "Persist", "Tag", "Owner", "SourceAddress", "VrfName", "Threshold", "Frequency", "Timeout", "Description", "IsPolled", "IsPollEnabled", "IsFiltered", "IsExcludedFromReports", "IsRetired", "IndexList" ];
 var DNS_columns = [ "TargetAddressString", "NameServer" ];
 var HTTP_columns = [ "Url", "NameServer", "TypeOfService", "Operation", "HTTPVersion", "String1", "String2", "String3", "String4", "String5" ];
 var IcmpEcho_columns = [ "TargetAddress", "TypeOfService", "RequestSize" ];
@@ -96,7 +109,7 @@ function load_context_devices() {
    // device context
    if (getQueryVariable('ItemTypeName') == "device" && getQueryVariable('ItemIdDA') != undefined) var url = "/pc/odata/api/devices?$format=json&$top=10000&$select=ID,IPDomainID,Name,PrimaryIPAddress&$filter=((ID%20eq%20"+getQueryVariable('ItemIdDA')+")%20and%20(substringof(%27SNMP%27,%20SupportedProtocols)%20eq%20true)%20and%20(PolledItemCount%20gt%200))";
    // group context
-   else if (getQueryVariable('ItemTypeName') == "group" && getQueryVariable('ItemIdDA') != undefined) var url = "/pc/odata/api/devices?$format=json&$top=10000&$select=ID,IPDomainID,Name,PrimaryIPAddress&$filter=((groups/ID%20eq%20"+getQueryVariable('ItemIdDA')+")%20and%20(substringof(%27SNMP%27,%20SupportedProtocols)%20eq%20true)%20and%20(PolledItemCount%20gt%200))";
+   else if ((getQueryVariable('ItemTypeName') == "group" || getQueryVariable('ItemTypeName') == "site") && getQueryVariable('ItemIdDA') != undefined) var url = "/pc/odata/api/devices?$format=json&$top=10000&$select=ID,IPDomainID,Name,PrimaryIPAddress&$filter=((groups/ID%20eq%20"+getQueryVariable('ItemIdDA')+")%20and%20(substringof(%27SNMP%27,%20SupportedProtocols)%20eq%20true)%20and%20(PolledItemCount%20gt%200))";
    // return all devices (testing)
    else if (getQueryVariable('ItemTypeName') == "all") var url = "/pc/odata/api/devices?$format=json&$top=10000&$select=ID,IPDomainID,Name,PrimaryIPAddress&$filter=((substringof(%27SNMP%27,%20SupportedProtocols)%20eq%20true)%20and%20(PolledItemCount%20gt%200))";
    else return;
@@ -245,7 +258,7 @@ function updateType() {
                $("#noTestHost").show();
                if (getQueryVariable('ItemTypeName') == "device" && !noTestHostMessage) {
                   if (!noTestHostMessage) $("#noTestHostMessage").html("Warning: The selected test type is not supported on this device.<br>Ensure the device is properly configured and that a monitoring profile that includes "+$("#testType option:selected").text()+" Tests is applied to it.<br>You will only be able to see existing tests, not create or modify anything.");
-               } else if (getQueryVariable('ItemTypeName') == "group" && !noTestHostMessage) 
+               } else if ((getQueryVariable('ItemTypeName') == "group" || getQueryVariable('ItemTypeName') == "site") && !noTestHostMessage) 
                   if (!noTestHostMessage) $("#noTestHostMessage").html("<b>Warning:</b> The selected test type is not supported on any device in this group, or the devices are not configured with SNMP Set.<br>Ensure the devices are properly configured, that a monitoring profile that includes "+$("#testType option:selected").text()+" Tests is applied to them and that a SNMP Set profile is applied to them.<br>You will only be able to see existing tests, not create or modify anything.");
                else 
                   $("#noTestHostMessage").html("<b>Error:</b> Invalid parameters, please review App Settings.");
@@ -388,7 +401,12 @@ function display_discovered_tests() {
                   { "data": "ID", "name": "ItemID", "title": "Item ID" },
                   { "data": "Name", "name": "Name", "title": "Name",
                     "render": function ( data, type, row, meta ) {
-                       return '<a href="/pc/redirector?SourceType=262144&LocalID='+row.ID+'" target="_parent">'+data+'</a>';;
+                       return '<a href="/pc/redirector?SourceType=262144&LocalID='+row.ID+'" target="_parent">'+data+'</a>';
+                    }
+                  },
+                  { "data": null, "name": "Quickview", "title": "Quick View",
+                    "render": function ( data, type, row, meta ) {
+                       return '<button class="graphLinks" onmouseover="graphQuickview('+meta.row+', \'hour\', this)">H</button> <button class="graphLinks" onmouseover="graphQuickview('+meta.row+', \'day\', this)">D</button> <button class="graphLinks" onmouseover="graphQuickview('+meta.row+', \'month\', this)">M</button>';
                     }
                   },
                   { "data": "Description", "name": "Description", "title": "Description" },
@@ -1024,9 +1042,189 @@ function rediscover_test_host() {
    alert("Change applied to the Test Host, please refresh this page in a few seconds/minutes to view the change in monitored test.");   
 }
 
+function graphQuickview(row, range, element) {
+   var itemID=discoveredTests_dt.row(row).data().ID;
+   var itemName=discoveredTests_dt.row(row).data().Name;
+   var spinner = new Spinner({color:'#000000', lines: 12}).spin($("#graphQuickview")[0]);
+   var nowMs = Date.now();
+   var now = Math.floor(Date.now() / 1000);
+   var endTime=now;
+   var mf=testTypeMF[testType] + "s";
+   var maximums = [ 1, 1 ];
+
+   switch (range) {
+      case "hour":
+         var startTime = (Math.floor(now/(5*60))-12)*5*60;
+         var resolution = "RATE";
+         var formatTime = d3.time.format("%H:%M");
+         var allValues = new Array();
+         for (i = startTime; i <= now; i += 5*60) {
+            allValues.push(i*1000);
+         }
+         var tickValues = new Array();
+         for (i = startTime; i <= now; i += 2*5*60) {
+            tickValues.push(i*1000);
+         }
+         break;
+      case "day":
+         var startTime = (Math.floor(now/(60*60))-24)*60*60;
+         var resolution = "HOUR";
+         var formatTime = d3.time.format("%H:%M");
+         var allValues = new Array();
+         for (i = startTime; i <= now; i += 60*60) {
+            allValues.push(i*1000);
+         }
+         var tickValues = new Array();
+         for (i = startTime; i <= now; i += 6*60*60) {
+            tickValues.push(i*1000);
+         }
+         break;
+      case "month":
+         var startTime = (Math.floor(now/(60*60*24))-30)*60*60*24;
+         var resolution = "DAY";
+         var formatTime = d3.time.format("%m/%d");
+         var allValues = new Array();
+         for (i = startTime; i <= now; i += 60*60*24) {
+            allValues.push(i*1000);
+         }
+         var tickValues = new Array();
+         for (i = startTime; i <= now; i += 5*60*60*24) {
+            tickValues.push(i*1000);
+         }
+         break;
+   }
+
+   $("#graphQuickviewWrapper").show();
+   $("#graphQuickviewWrapper").offset({top: $(element).offset().top, left: $(element).offset().left-5 });
+   $("#graphTitle").html("Quick view for the last "+range+" ("+(range=="hour"?"polled data":(range=="day"?"hourly rollup data":"daily rollup data"))+")");
+   $("#graphItemName").html(itemName);
+
+   // Determine URL or data set to load
+   var url="/pc/odata/api/components?$expand=" + mf +
+       "&$select=" + mf + "/Timestamp," + mf + "/im_PathAvailability," + mf + "/im_AvgResponseTime," + mf + "/im_MaximumResponse" +
+       "&$filter=((ID eq " + itemID + "))" +
+       "&starttime=" + (startTime-1) + "&endtime=" + (endTime+1) + "&resolution=" + resolution +
+       "&$format=text/csv";
+
+   console.log("URL: " + url);
+
+   // Load data set using D3.js 
+   d3.csv(url,function(error, data) {
+      spinner.stop();
+      if (error) {
+         alert("Error loading data set: " + error)
+      } else {
+         if (data.length == 1) { // data returned is empty
+            $("#graphNoData").html("No Data To Display");
+            $("#graphTitle").html("");
+            $("#graphItemName").html("");
+            $("#graphQuickview svg").html("");
+         } else {
+            $("#graphNoData").html("");
+            $("#graphQuickview svg").html("");
+
+            nv.addGraph(function() {
+               var myData = parseData(data, mf, range, allValues, maximums);
+               chart = nv.models.multiChart()
+                             .margin({top: 30, right: 60, bottom: 50, left: 60})
+                             .color(d3.scale.category10().range());
+
+               chart.xAxis     //Chart x-axis settings
+                    .axisLabel('Time')
+                    .tickValues(tickValues)
+                    .tickFormat(function(d) { return formatTime(new Date(d)); })
+
+               chart.yAxis1     //Chart left y-axis settings
+                    .axisLabel('%')
+                    .axisLabelDistance(-10)
+                    .tickFormat(d3.format(',.1f'));
+
+               chart.yDomain1([0, maximums[0]]);
+
+               chart.yAxis2     //Chart right y-axis settings
+                    .axisLabel('ms')
+                    .axisLabelDistance(-20)
+                    .tickFormat(d3.format(',.1f'));
+
+               chart.yDomain2([0, maximums[1]]);
+
+               chart.height(200);
+               chart.showLegend(false);
+               chart.interpolate("monotone");
+
+               chart.useInteractiveGuideline(true);
+               chart.interactiveLayer.tooltip.contentGenerator(function(d) {
+                        //var header = moment(d.value).format('dddd, MMM Do YYYY, hh:mm:ss A');
+                        var header = d3.time.format("%A %m/%d %H:%M")(new Date(d.value));
+                        var headerhtml = "<thead><tr><td colspan='4'><strong class='x-value'>" + header + "</strong></td></tr></thead>";
+                        var bodyhtml = "<tbody>";
+                        d.series.forEach(function(c) {
+                            bodyhtml = bodyhtml + "<tr><td class='legend-color-guide'><div style='background-color: " + c.color + ";'></div></td><td class='key'>" + c.key + "</td><td class='value'>" + c.value + "</td><td class='key'>" + c.yAxis.axisLabel() + "</td></tr>";
+                        });
+                        bodyhtml = bodyhtml+"</tbody>";
+                        return "<table>"+headerhtml+''+bodyhtml+"</table>";
+               });
+
+               d3.select('#graphQuickview svg')
+                    .datum(myData)
+                    .transition().duration(500).call(chart);
+               return chart;
+            });
+         }
+      }
+   });
+}
+
+
+function parseData(thisData, mf, range, timeStamps, maximums) {
+   var returnData = new Array();
+
+   for (i=0; i<thisData.length; i++) {
+      var j=0;
+      $.each(thisData[i], function (column, value) {
+         if (column == "" || column == mf+"/Timestamp") return;
+         // set the serie information
+         if (i==0) {
+            var axis = 2;
+            if (column.match(/Percent|Pct|Availability/) != null) axis = 1;
+            returnData[j] = { 'key': column.replace(mf+"/", ""), 'type': 'line', 'yAxis': axis, 'values': new Array() };
+         }
+         // set the serie values (those returned by odata)
+         returnData[j].values.push({   
+            'x': thisData[i][mf+"/Timestamp"] * 1000,
+            'y': (value!=""?Math.round(parseFloat(value)*100)/100:"No Data")
+         });
+         if (value != "" && maximums[returnData[j].yAxis-1] < Math.round(parseFloat(value)*100)/100) maximums[returnData[j].yAxis-1] = Math.round(parseFloat(value)*100)/100;
+         j++;
+      });
+   }
+
+   // Add any missing timestamp (odata does not return anything for missed polls)
+   timeStamps.forEach(function(timeStamp) {
+      returnData.forEach(function(serie) {
+         found=false;
+         serie.values.forEach(function(point) {
+            if (point.x == timeStamp) {
+               found=true;
+               return;
+            }
+         });
+         if (!found) {
+            serie.values.push({
+               'x': timeStamp,
+               'y': null
+            });
+         }
+      });
+   });
+
+   return returnData;
+}
+
 $(document).ready(function() {
    //alert(getQueryVariable('ItemIdDA'));
 });
+
 </script>
 </head>
 <body>
@@ -1130,5 +1328,15 @@ $(document).ready(function() {
   <button class="dt-button" type="button" id="profileSubmit" onclick="validate_profile()">Submit</button>
   <button class="dt-button" type="button" onclick="$('#testProfile').hide();">Cancel</button>
 </div>
+<row>
+  <div id="graphQuickviewWrapper" onmouseleave='$("#graphQuickviewWrapper").hide()'>
+    <div id="graphQuickview">
+      <div id="graphTitle" class="boxtitle"></div>
+      <div id="graphItemName"></div>
+      <div id="graphNoData"></div>
+      <svg></svg>
+    </div>
+  </div>
+</row>
 </body>
 </html>

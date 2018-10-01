@@ -521,3 +521,41 @@ table.dataTable tbody td.dt-body-nowrap {
 #noTestHostMessage, #profileAttributes, #testProfile {
 	padding-bottom: 8px;
 }
+
+.graphLinks {
+	z-index: 4;
+	position: relative;
+        font-size: 11px;
+        padding: 1px 3px 2px;
+}
+
+#graphTitle {
+	margin: 10px 10px 0px 10px;
+}
+
+#graphItemName {
+	margin: 0px 10px 10px 10px;
+	font-family: Helvetica,Arial,sans-serif!important;
+        font-size: 11px;
+	text-decoration: none;
+	color: #336665;
+}
+
+#graphQuickviewWrapper {
+	position: absolute;
+	display: none;
+        padding: 10px;
+}
+
+#graphQuickview {
+	position: relative;
+	z-index: 5;
+	width: 350px;
+	height: 260px;
+	background-color: white;
+	border: 1px black solid;
+}
+
+
+
+
