@@ -28,6 +28,10 @@ Only valid test hosts are available:
 * They must have a Monitoring Profile that includes Response Path metric families (and show up as "supported")
 * They must have a SNMP Set profile assigned in DA
 
+Response Path tests in the discovered/monitored table have a "Quick View" capability that allows the user to verify that data is being collected and rolled-up as expected.
+
+![Response Path List Tables](screenshot%233.png)
+
 ## Installation
 
 ### Prerequisites
