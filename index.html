@@ -134,7 +134,7 @@ function load_context_devices() {
                $("#noTestHostMessage").html("<b>Error:</b> The selected group does not contain any valid device.<br>Ensure SNMP devices managed by Data Aggregator are included in the selected group.");
          }
          initialCheck();
-         console.log("Completed loading relevant devices info");
+         //console.log("Completed loading relevant devices info");
       },
       error: function(jqXHR, textStatus, errorThrown) {
          console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
@@ -242,7 +242,7 @@ function updateType() {
 
       // get list of devices supporting this MF from DA OpenAPI
       $.ajax({
-         url: "/pc/odata/api/metricfamilyhistories?$format=json&$top=1000&$expand=device&$select=device/ID,device/Name,device/PrimaryIPAddress&$filter=((MetricFamilyID%20eq%20%27"+testTypeMF[testType]+"%27)%20and%20(Status%20eq%20%27SUPPORTED%27))",
+         url: "/pc/odata/api/metricfamilyhistories?$format=json&$top=1000&$expand=device&$select=device/ID,device/Name,device/PrimaryIPAddress,device/IPDomainID&$filter=((MetricFamilyID%20eq%20%27"+testTypeMF[testType]+"%27)%20and%20(Status%20eq%20%27SUPPORTED%27))",
          cache: false,
          success: function( response ) {
             $("#attr_TestHost").html("");
@@ -252,7 +252,7 @@ function updateType() {
                if (contextDevices[this.device.ID]["SNMPSet"] != true) {
                   return;
                }
-               $("#attr_TestHost").append("<option value='"+ this.device.ID +"' hostip='"+ this.device.PrimaryIPAddress +"'>"+ this.device.Name + " (" + this.device.PrimaryIPAddress +")</option>");
+               $("#attr_TestHost").append("<option value='"+ this.device.ID +"' hostip='"+ this.device.PrimaryIPAddress +"' hostdomain='"+this.device.IPDomainID+"'>"+ this.device.Name + " (" + this.device.PrimaryIPAddress +")</option>");
             });
             if ($("#attr_TestHost option").length == 0) {
                $("#noTestHost").show();
@@ -265,6 +265,7 @@ function updateType() {
             } else {
                $("#noTestHost").hide();
             }
+            update_hosts();
             display_discovered_tests();
             display_managed_profiles();
          },
@@ -320,7 +321,7 @@ function display_discovered_tests() {
                   "ControlEnable": $(this).find('ControlEnable').text(),
                   "CodecType": $(this).find('CodecType').text(),
                   "CodecInterval": $(this).find('CodecInterval').text(),
-                  "CodecPayload": $(this).find('TargetPort').text(),
+                  "CodecPayload": $(this).find('TargetPayload').text(),
                   "CodecNumPackets": $(this).find('CodecNumPackets').text(),
                   "ICPIFAdvFactor": $(this).find('ICPIFAdvFactor').text(),
                   "NameServer": $(this).find('NameServer').text(),
@@ -428,7 +429,7 @@ function display_discovered_tests() {
                   { "data": "IsPolled", "name": "IsPolled", "title": "Polled" },
                   { "data": "IsPollEnabled", "name": "IsPollEnabled", "title": "Poll Enabled", "visible": false },
                   { "data": "IsFiltered", "name": "IsFiltered", "title": "Filtered", "visible": false },
-                  { "data": "IsExcludedFromReports", "name": "IsExcludedFromReports", "title": "Excludedi From Reports", "visible": false },
+                  { "data": "IsExcludedFromReports", "name": "IsExcludedFromReports", "title": "Excluded From Reports", "visible": false },
                   { "data": "IsRetired", "name": "IsRetired", "title": "Retired", "visible": false },
                   { "data": "IndexList", "name": "Index", "title": "Index" },
                   { "data": "Tag", "name": "Tag", "title": "Tag" },
@@ -437,28 +438,48 @@ function display_discovered_tests() {
                   { "data": "VrfName", "name": "VrfName", "title": "VRF Name" },
                   { "data": "SourcePort", "name": "SourcePort", "title": "Source Port" },
                   { "data": "TargetPort", "name": "TargetPort", "title": "Target Port" },
-                  { "data": "ControlEnable", "name": "ControlEnable", "title": "Control Enabled" },
+                  { "data": "ControlEnable", "name": "ControlEnable", "title": "Control Enabled",
+                    "render": function ( data, type, row, meta ) { 
+                       if (data=="1") return "Yes";
+                       if (data=="2") return "No";
+                       return data;
+                    }
+                  },
                   { "data": "TypeOfService", "name": "TypeOfService", "title": "Type Of Service" },
-                  { "data": "NameServer", "name": "NameServer", "title": "NameServer" },
-                  { "data": "CodecType", "name": "CodecType", "title": "CodecType" },
-                  { "data": "CodecInterval", "name": "CodecInterval", "title": "CodecInterval" },
-                  { "data": "CodecPayload", "name": "CodecPayload", "title": "CodecPayload" },
-                  { "data": "CodecNumPackets", "name": "CodecNumPackets", "title": "CodecNumPackets" },
-                  { "data": "ICPIFAdvFactor", "name": "ICPIFAdvFactor", "title": "ICPIFAdvFactor" },
-                  { "data": "Operation", "name": "Operation", "title": "Operation" },
+                  { "data": "NameServer", "name": "NameServer", "title": "Name Server" },
+                  { "data": "CodecType", "name": "CodecType", "title": "Codec Type",
+                    "render": function ( data, type, row, meta ) { 
+                       if (data=="0") return "N/A";
+                       if (data=="1") return "G.711 U Law";
+                       if (data=="2") return "G.711 A Law";
+                       if (data=="3") return "G.729a";
+                       return data;
+                    }
+                  },
+                  { "data": "CodecInterval", "name": "CodecInterval", "title": "Codec Interval" },
+                  { "data": "CodecPayload", "name": "CodecPayload", "title": "Codec Payload" },
+                  { "data": "CodecNumPackets", "name": "CodecNumPackets", "title": "Codec Nb of Packets" },
+                  { "data": "ICPIFAdvFactor", "name": "ICPIFAdvFactor", "title": "ICPIF Advantage Factor" },
+                  { "data": "Operation", "name": "Operation", "title": "Operation",
+                    "render": function ( data, type, row, meta ) { 
+                       if (data=="1") return "HTTP GET";
+                       if (data=="2") return "HTTP Raw";
+                       return data;
+                    }
+                  },
                   { "data": "HTTPVersion", "name": "HTTPVersion", "title": "HTTP Version" },
-                  { "data": "String1", "name": "String1", "title": "String1" },
-                  { "data": "String2", "name": "String2", "title": "String2" },
-                  { "data": "String3", "name": "String3", "title": "String3" },
-                  { "data": "String4", "name": "String4", "title": "String4" },
-                  { "data": "String5", "name": "String5", "title": "String5" },
+                  { "data": "String1", "name": "String1", "title": "String 1" },
+                  { "data": "String2", "name": "String2", "title": "String 2" },
+                  { "data": "String3", "name": "String3", "title": "String 3" },
+                  { "data": "String4", "name": "String4", "title": "String 4" },
+                  { "data": "String5", "name": "String5", "title": "String 5" },
                   { "data": "Threshold", "name": "Threshold", "title": "Threshold" },
                   { "data": "Frequency", "name": "Frequency", "title": "Frequency" },
                   { "data": "Timeout", "name": "Timeout", "title": "Timeout" },
                   { "data": "Interval", "name": "Interval", "title": "Interval" },
-                  { "data": "NumPackets", "name": "NumPackets", "title": "# Packets" },
-                  { "data": "RequestSize", "name": "RequestSize", "title": "RequestSize" },
-                  { "data": "ResponseSize", "name": "ResponseSize", "title": "ResponseSize" }
+                  { "data": "NumPackets", "name": "NumPackets", "title": "Nb of Packets" },
+                  { "data": "RequestSize", "name": "RequestSize", "title": "Request Size" },
+                  { "data": "ResponseSize", "name": "ResponseSize", "title": "Response Size" }
                ],
                autoWidth: false,
                destroy: true
@@ -636,24 +657,45 @@ function display_managed_profiles() {
                     } 
                   },
                   { "data": "CreateTime", "name": "CreateTime", "title": "Create Time" },
-                  { "data": "Persist", "name": "Persist", "title": "Persist" },
+                  { "data": "Persist", "name": "Persist", "title": "Persist",
+                    "render": function ( data, type, row, meta ) { 
+                       if (data=="false") return "In memory only";
+                       else return "Save to NVRAM";
+                    }
+                  },
                   { "data": "Tag", "name": "Tag", "title": "Tag" },
                   { "data": "Owner", "name": "Owner", "title": "Owner" },
                   { "data": "SourceAddress", "name": "SourceAddress", "title": "Source" },
                   { "data": "VrfName", "name": "VrfName", "title": "VRF Name" },
                   { "data": "SourcePort", "name": "SourcePort", "title": "Source Port" },
                   { "data": "TargetPort", "name": "TargetPort", "title": "Target Port" },
-                  { "data": "ControlEnable", "name": "ControlEnable", "title": "Control Enabled" },
+                  { "data": "ControlEnable", "name": "ControlEnable", "title": "Control Enabled",
+                    "render": function ( data, type, row, meta ) { 
+                       if (data=="1") return "Yes";
+                       if (data=="2") return "No";
+                       return data;
+                    }
+                  },
                   { "data": "TypeOfService", "name": "TypeOfService", "title": "Type Of Service" },
                   { "data": "NameServer", "name": "NameServer", "title": "NameServer" },
-                  { "data": "CodecType", "name": "CodecType", "title": "CodecType" },
+                  { "data": "CodecType", "name": "CodecType", "title": "CodecType", 
+                    "render": function ( data, type, row, meta ) { 
+                       if (data=="0") return "N/A";
+                       if (data=="1") return "G.711 U Law";
+                       if (data=="2") return "G.711 A Law";
+                       if (data=="3") return "G.729a";
+                       return data;
+                    }
+                  },
                   { "data": "CodecInterval", "name": "CodecInterval", "title": "CodecInterval" },
                   { "data": "CodecPayload", "name": "CodecPayload", "title": "CodecPayload" },
                   { "data": "CodecNumPackets", "name": "CodecNumPackets", "title": "CodecNumPackets" },
                   { "data": "ICPIFAdvFactor", "name": "ICPIFAdvFactor", "title": "ICPIFAdvFactor" },
                   { "data": "Operation", "name": "Operation", "title": "Operation",
-                    "render": function ( data, type, row, meta ) {
-                       return data == '1' ? 'GET' : 'RAW';
+                    "render": function ( data, type, row, meta ) { 
+                       if (data=="1") return "HTTP GET";
+                       if (data=="2") return "HTTP Raw";
+                       return data;
                     }
                   },
                   { "data": "HTTPVersion", "name": "HTTPVersion", "title": "HTTP Version" },
@@ -854,7 +896,7 @@ function create_test() {
    $("#testProfile tr[testType=common]").show();
    $("#testProfile tr[testType="+testType+"]").show();
    $("#testProfile tr[actionType=update]").hide();
-   $("#attr_ActionType").html("");
+   reset_test_data();
    $("#attr_ActionType").append("<option>CREATE</option><option>FORCE_CREATE</option>");
    window.scrollTo(0,document.body.scrollHeight);
    $('#attr_Name').focus();
@@ -868,10 +910,9 @@ function duplicate_test(row_data, context) {
    $("#testProfile tr[testType=common]").show();
    $("#testProfile tr[testType="+testType+"]").show();
    $("#testProfile tr[actionType=update]").hide();
+   reset_test_data();
    load_test_data(row_data, context);
-   $("#attr_ActionType").html("");
    $("#attr_ActionType").append("<option selected>CREATE</option><option>FORCE_CREATE</option>");
-   $("#attr_ItemID").val("");
    window.scrollTo(0,document.body.scrollHeight);
    $('#attr_Name').focus();
 }
@@ -883,15 +924,32 @@ function update_test(row_data) {
    $("#testProfile tr[testType=common]").show();
    $("#testProfile tr[testType="+testType+"]").show();
    $("#testProfile tr[actionType=new]").hide();
+   reset_test_data();
    load_test_data(row_data);
-   $("#attr_ActionType").html("");
    $("#attr_ActionType").append("<option selected>UPDATE</option>");
    $("#attr_ItemID").val(row_data['ID']);
    window.scrollTo(0,document.body.scrollHeight);
    $('#attr_Name').focus();
 } 
 
+function reset_test_data() {
+   $("#attr_ActionType").html("");
+   $("input[id^='attr_']").val(""); 
+   if ($("#attr_IPDomainID option").length > 0) $("#attr_IPDomainID option")[0].selected=true;
+   else $("#attr_IPDomainID").val("");
+   update_hosts();
+   if ($("#attr_TestHost option").length > 0) $("#attr_TestHost option")[0].selected=true;
+   else $("#attr_TestHost").val("");
+   $("#attr_Persist").val("true");
+   $("#attr_Operation").val("1");
+   $("#attr_ControlEnable").val("1");
+   $("#attr_CodecType").val("0");
+}
+
 function load_test_data(row_data, context = "discovered") {
+   if (context == "discovered") $('#attr_IPDomainID').val(contextDevices[row_data['DeviceItemID']]['IPDomainID']);
+   else if (context == "managed") $('#attr_IPDomainID').val(row_data['IPDomainID']);
+   update_hosts();
    $.each(row_data, function(name, value) {
       if (context == "discovered") {
          if (name == "Name") return;
@@ -924,6 +982,12 @@ function change_type() {
      $("#testProfile tr[actionType=update]").hide();
    else if ($("#attr_ActionType").val() == "UPDATE") 
      $("#testProfile tr[actionType=new]").hide();
+}
+
+function update_hosts() {
+   $('#attr_TestHost option').hide();
+   $('#attr_TestHost option[hostdomain="'+$('#attr_IPDomainID').val()+'"]').show();
+   if ($('#attr_TestHost option:selected').is(":hidden")) $('#attr_TestHost').val("0"); // reverted selection to blank if item not visible for current IP domain
 }
 
 function validate_profile () {
@@ -1106,7 +1170,7 @@ function graphQuickview(row, range, element) {
        "&starttime=" + (startTime-1) + "&endtime=" + (endTime+1) + "&resolution=" + resolution +
        "&$format=text/csv";
 
-   console.log("URL: " + url);
+   //console.log("URL: " + url);
 
    // Load data set using D3.js 
    d3.csv(url,function(error, data) {
@@ -1272,9 +1336,9 @@ $(document).ready(function() {
         </select>
       </td></tr>
       <tr testType="common" title="The operation type of Round-Trip test" class="mandatory"><td>ActionType</td><td><select id="attr_ActionType"></select></td></tr>
-      <tr testType="common" actionType="update" class="mandatory" readonly><td>Item ID</td><td><input type="text" id="attr_ItemID" maxLength="32"/></td></tr>
-      <tr testType="common" class="mandatory" title="The IP Domain ID that this profile lives under"><td>IP Domain</td><td><select id="attr_IPDomainID"></select></td></tr>
       <tr testType="common" class="mandatory" title="Identifies the name of the Test Profile"><td>Profile Name</td><td><input type="text" id="attr_Name" maxLength="255"/></td></tr>
+      <tr testType="common" actionType="update" class="mandatory" readonly><td>Item ID</td><td><input type="text" id="attr_ItemID" maxLength="32"/></td></tr>
+      <tr testType="common" class="mandatory" title="The IP Domain ID that this profile lives under"><td>IP Domain</td><td><select id="attr_IPDomainID" onchange="update_hosts()"></select></td></tr>
       <tr testType="common" actionType="new" class="mandatory" title="The address of the device on which the test runs.&#xa;Note: A device must have a SNMP Set profile assigned and have the selected test type discovered, before it can be selected."><td>Test Host</td><td><select id="attr_TestHost"></select></td></tr>
       <tr testType="DNS" class="mandatory" title="A string which specifies the address of the target. This string can be in IP address format or a hostname."><td>Target IP or Hostname</td><td><input type="text" id="attr_TargetAddressString" maxLength="255"/></td></tr>
       <tr testType="DNS" class="mandatory" title="The IP address of the name-server"><td>Name Server</td><td><input type="text" id="attr_NameServer" maxLength="15"/></td></tr>
@@ -1307,19 +1371,19 @@ $(document).ready(function() {
       <tr testType="IcmpPathEcho" title="Request probe payload size"><td>Request Size</td><td><input type="text" id="attr_RequestSize" maxLength="5"/></td></tr>
       <tr testType="ICMPJitter" title="Type of service octet in an IP header"><td>Type Of Service</td><td><input type="text" id="attr_TypeOfService" maxLength="3"/></td></tr>
       <tr testType="ICMPJitter" title="Time between between packets in milliseconds"><td>Interval</td><td><input type="text" id="attr_Interval" maxLength="5"/></td></tr>
-      <tr testType="ICMPJitter" title="Number of packets that need to be transmitted"><td>Number of Packets</td><td><input type="text" id="attr_NumPackets" maxLength="10"/></td></tr>
+      <tr testType="ICMPJitter" title="Number of packets that need to be transmitted"><td>Nb. of Packets</td><td><input type="text" id="attr_NumPackets" maxLength="10"/></td></tr>
       <tr testType="Jitter" title="Represents the source address port number. If left unspecified a port is selected by the system."><td>Source Port</td><td><input type="text" id="attr_SourcePort" maxLength="5"/></td></tr>
       <tr testType="Jitter" title="The destination port to which test probes are sent"><td>Target Port</td><td><input type="text" id="attr_TargetPort" maxLength="5"/></td></tr>
       <tr testType="Jitter" title="Type of service octet in an IP header"><td>Type Of Service</td><td><input type="text" id="attr_TypeOfService" maxLength="3"/></td></tr>
       <tr testType="Jitter" title="Time between between packets in milliseconds"><td>Interval</td><td><input type="text" id="attr_Interval" maxLength="5"/></td></tr>
-      <tr testType="Jitter" title="Number of packets that need to be transmitted"><td>Number of Packets</td><td><input type="text" id="attr_NumPackets" maxLength="5"/></td></tr>
+      <tr testType="Jitter" title="Number of packets that need to be transmitted"><td>Nb. of Packets</td><td><input type="text" id="attr_NumPackets" maxLength="5"/></td></tr>
       <tr testType="Jitter" title="Request probe payload size"><td>Request Size</td><td><input type="text" id="attr_RequestSize" maxLength="5"/></td></tr>
       <tr testType="Jitter" title="Response probe payload size"><td>Response Size</td><td><input type="text" id="attr_ResponseSize" maxLength="5"/></td></tr>
       <tr testType="Jitter" title="Codec type to be used with jitter probe"><td>Codec Type</td><td><select id="attr_CodecType"><option value="0">N/A</option><option value="1">G.711 U Law</option><option value="2">G.711 A Law</option><option value="3">G.729a</option></select></td></tr>
       <tr testType="Jitter" title="Time between between packets in milliseconds. Applicable only to jitter probe which uses CodecType."><td>Codec Interval</td><td><input type="text" id="attr_CodecInterval" maxLength="5"/></td></tr>
       <tr testType="Jitter" title="Number of octets that needs to be placed into the Data portion of the message. Applicable only to jitter probe which uses CodecType."><td>Codec Payload</td><td><input type="text" id="attr_CodecPayload" maxLength="5"/></td></tr>
-      <tr testType="Jitter" title="Number of packets that need to be transmitted. Applicable only to jitter probe which uses CodecType."><td>Codec Number of Packets</td><td><input type="text" id="attr_CodecNumPackets"/></td></tr>
-      <tr testType="Jitter" title="Used while calculating jitter ICPIF values"><td>ICPIF Adv Factor</td><td><input type="text" id="attr_ICPIFAdvFactor" maxLength="2"/></td></tr>
+      <tr testType="Jitter" title="Number of packets that need to be transmitted. Applicable only to jitter probe which uses CodecType."><td>Codec Nb. of Packets</td><td><input type="text" id="attr_CodecNumPackets"/></td></tr>
+      <tr testType="Jitter" title="Used while calculating jitter ICPIF values"><td>ICPIF Advantage Factor</td><td><input type="text" id="attr_ICPIFAdvFactor" maxLength="2"/></td></tr>
       <tr testType="TCP" title="Represents the source address port number. If left unspecified a port is selected by the system."><td>Source Port</td><td><input type="text" id="attr_SourcePort" maxLength="5"/></td></tr>
       <tr testType="TCP" title="The destination port to which test probes are sent"><td>Target Port</td><td><input type="text" id="attr_TargetPort" maxLength="5"/></td></tr>
       <tr testType="TCP" title="If this object is enabled, then the RTR application will send control messages to a responder, residing on the target router to respond to the data request packets being sent by the source router."><td>Control Enabled</td><td><select id="attr_ControlEnable"><option value="1" selected>Yes</option><option value="2">No</option></select></td></tr>
