@@ -120,7 +120,6 @@ function load_context_devices() {
       success: function( response ) {
          $(response.d.results).each( function () {
             contextDevices[this.ID] = { "IPDomainID": this.IPDomainID, "Name": this.Name, "IP": this.PrimaryIPAddress };
-            load_context_snmpset(this.ID);
          });
          if ($(response.d.results).length==0) {
             noTestHostMessage = true;
@@ -137,46 +136,6 @@ function load_context_devices() {
          //console.log("Completed loading relevant devices info");
       },
       error: function(jqXHR, textStatus, errorThrown) {
-         console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
-      }
-   });
-}
-
-function load_context_snmpset(itemID) {
-   $.ajax({
-      url: "/pc/da/rest/devices/manageable/"+itemID,
-      processData: false,
-      dataType: 'xml',
-      cache: false,
-      success: function( xml ) {
-         if ($(xml).find("RWSNMPProfileID").length > 0) {
-            contextDevices[itemID]["SNMPSet"] = true;
-         } else {
-            contextDevices[itemID]["SNMPSet"] = false;
-         }
-         var processedSNMP = 0;
-         $.each(contextDevices, function() { if (this["SNMPSet"] != undefined) processedSNMP++; });
-         if (Object.keys(contextDevices).length == processedSNMP) {
-            found = false;
-            $.each(contextDevices, function () {
-               if (this["SNMPSet"] == true) { 
-                  found = true;
-                  return;
-               }
-            });
-            if (!found) {
-               noTestCreate = true;
-               noTestHostMessage = true;
-               $("#noTestHost").show();
-               if (getQueryVariable('ItemTypeName') == "device")
-                  $("#noTestHostMessage").html("<b>Warning:</b> The selected host is not configured with SNMP Set.<br>Ensure the device is properly configured and that a SNMP Set profile is applied to it.<br>You will only be able to see existing tests, not create or modify anything.");
-               else
-                  $("#noTestHostMessage").html("<b>Warning:</b> No device in the selected group is configured with SNMP Set.<br>Ensure the devices are properly configured and that a SNMP Set profile is applied to them.<br>You will only be able to see existing tests, not create or modify anything.");
-            }
-         }
-      },
-      error: function(jqXHR, textStatus, errorThrown) {
-         contextDevices[itemID]["SNMPSet"] = false;
          console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
       }
    });
@@ -212,6 +171,52 @@ function initialCheck() {
             }
          }
       });
+
+      // load SNMP Set data and check if some devices have write capability
+      load_context_snmpset(Object.keys(contextDevices));
+}
+
+function load_context_snmpset(collection) {
+   itemID = collection.splice(0,1);
+   $.ajax({
+      url: "/pc/da/rest/devices/manageable/"+itemID,
+      processData: false,
+      dataType: 'xml',
+      cache: false,
+      success: function( xml ) {
+         if ($(xml).find("RWSNMPProfileID").length > 0) {
+            contextDevices[itemID]["SNMPSet"] = true;
+         } else {
+            contextDevices[itemID]["SNMPSet"] = false;
+         }
+         if (collection.length > 0) {
+            // recursively call this function until all devices are processed
+            load_context_snmpset(collection);
+         } else {
+            // once they are all processed, check if any has SNMP write
+            found = false;
+            $.each(contextDevices, function () {
+               if (this["SNMPSet"] == true) { 
+                  found = true;
+                  return;
+               }
+            });
+            if (!found) {
+               noTestCreate = true;
+               noTestHostMessage = true;
+               $("#noTestHost").show();
+               if (getQueryVariable('ItemTypeName') == "device")
+                  $("#noTestHostMessage").html("<b>Warning:</b> The selected host is not configured with SNMP Set.<br>Ensure the device is properly configured and that a SNMP Set profile is applied to it.<br>You will only be able to see existing tests, not create or modify anything.");
+               else
+                  $("#noTestHostMessage").html("<b>Warning:</b> No device in the selected group is configured with SNMP Set.<br>Ensure the devices are properly configured and that a SNMP Set profile is applied to them.<br>You will only be able to see existing tests, not create or modify anything.");
+            }
+         }
+      },
+      error: function(jqXHR, textStatus, errorThrown) {
+         contextDevices[itemID]["SNMPSet"] = false;
+         console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
+      }
+   });
 }
 
 function updateType() {
@@ -266,8 +271,8 @@ function updateType() {
                $("#noTestHost").hide();
             }
             update_hosts();
-            display_discovered_tests();
-            display_managed_profiles();
+            get_discovered_tests();
+            get_managed_profiles();
          },
          error: function(jqXHR, textStatus, errorThrown) {
             console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
@@ -276,67 +281,117 @@ function updateType() {
    }
 }
 
+function get_discovered_tests() {
+	// get list of currently discovered/polled tests from DA
+	// Need to do this in steps to work around DA limiting number of returned xml items
+	$.ajax({
+		url: '/pc/da/rest/' + testTypeWS[testType] + '/filtered',
+		processData: false,
+		type: 'POST',
+		data: '<FilterSelect xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="filter.xsd"><Select use="exclude"  isa="exclude"/></FilterSelect>',
+		contentType: 'application/xml',
+		dataType: 'xml',
+		cache: false,
+		success: function( xml ) {
+			rp_list = [];
+			$(xml).find('ID').each( function() {
+				rp_list.push(this.innerHTML);
+			});
+			rp = [];
+			// recursively retrieve all tests and display them in table
+			get_discovered_tests_collection(rp_list); 
+		},
+		error: function(jqXHR, textStatus, errorThrown) {
+			console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
+		}
+	});
+}
+
+// get currently discovered/polled tests from DA, 500 at a time.
+function get_discovered_tests_collection(collection) {
+	if (collection.length > 0) {
+		extract = collection.splice(0, 500);
+		filterXml = '\
+		<FilterSelect xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="filter.xsd">\
+                <Filter>\
+                       <IDList>\
+                       	 <ID>'+extract.join('</ID><ID>')+'</ID>\
+                       </IDList>\
+                </Filter>\
+		</FilterSelect>';
+
+		$.ajax({
+        	        url: '/pc/da/rest/' + testTypeWS[testType] + '/filtered',
+	                processData: false,
+                	type: 'POST',
+        	        data: filterXml,
+	                contentType: 'application/xml',
+        	        dataType: 'xml',
+	                cache: false,
+			success: function( xml ) {
+		            $(xml).find(testTypeWS[testType]).each(function() {
+		               // discard all devices not in context of selected group/device
+		               if (Object.keys(contextDevices).indexOf($(this).find('DeviceItemID').text()) == -1) return;
+		               rp.push({
+		                  "ID": $(this).find('ID').text(),
+		                  "DeviceItemID": $(this).find('DeviceItemID').text(),
+		                  "TestHost": contextDevices[$(this).find('DeviceItemID').text()].IP,
+		                  "Target": $(this).find('Target').text(),
+		                  "Name": $(this).find('Name').text(),
+		                  "Description": $(this).find('Description').text(),
+		                  "CreateTime": $(this).find('CreateTime').text(),
+		                  "IsPolled": $(this).find('IsPolled').text(),
+		                  "IsPollEnabled": $(this).find('IsPollEnabled').text(),
+		                  "IsFiltered": $(this).find('IsFiltered').text(),
+		                  "IsExcludedFromReports": $(this).find('IsExcludedFromReports').text(),
+		                  "IsRetired": ($(this).find('Retired').length == 0?"false":"true"),
+		                  "IndexList": $(this).find('IndexList').first().text(),
+		                  "SourceAddress": $(this).find('SourceAddress').text(),
+		                  "Owner": $(this).find('Owner').text(),
+		                  "Tag": $(this).find('Tag').text(),
+		                  "Threshold": $(this).find('Threshold').text(),
+		                  "Frequency": $(this).find('Frequency').text(),
+		                  "Timeout": $(this).find('Timeout').text(),
+		                  "TypeOfService": $(this).find('TypeOfService').text(),
+		                  "VrfName": $(this).find('VrfName').text(),
+		                  "Persist": $(this).find('Persist').text(),
+		                  "Interval": $(this).find('Interval').text(),
+		                  "NumPackets": $(this).find('NumPackets').text(),
+		                  "RequestSize": $(this).find('RequestSize').text(),
+		                  "ResponseSize": $(this).find('ResponseSize').text(),
+		                  "SourcePort": $(this).find('SourcePort').text(),
+		                  "TargetPort": $(this).find('TargetPort').text(),
+		                  "ControlEnable": $(this).find('ControlEnable').text(),
+		                  "CodecType": $(this).find('CodecType').text(),
+		                  "CodecInterval": $(this).find('CodecInterval').text(),
+		                  "CodecPayload": $(this).find('TargetPayload').text(),
+		                  "CodecNumPackets": $(this).find('CodecNumPackets').text(),
+		                  "ICPIFAdvFactor": $(this).find('ICPIFAdvFactor').text(),
+		                  "NameServer": $(this).find('NameServer').text(),
+		                  "Operation": $(this).find('Operation').text(),
+		                  "HTTPVersion": $(this).find('HTTPVersion').text(),
+		                  "String1": $(this).find('String1').text(),
+		                  "String2": $(this).find('String2').text(),
+		                  "String3": $(this).find('String3').text(),
+		                  "String4": $(this).find('String4').text(),
+		                  "String5": $(this).find('String5').text()
+		               });
+          		   });
+			   // recursively call this function until all tests are loaded
+			   get_discovered_tests_collection(collection);				
+			},
+		 	error: function(jqXHR, textStatus, errorThrown) {
+		            console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
+			}
+		});
+	} else {
+		// all tests loaded, we can now display the table
+		display_discovered_tests();
+	}
+}
+
+// build the datatable for discovered tests, based on already retrieved data
 function display_discovered_tests() {
-      // get currently discovered/polled tests from DA
-      $.ajax({
-         url: '/pc/da/rest/' + testTypeWS[testType],
-         processData: false,
-         dataType: 'xml',
-         cache: false,
-         success: function( xml ) {
-            rp = [];
-            i=0;
-            $(xml).find(testTypeWS[testType]).each(function() {
-               // discard all devices not in context of selected group/device
-               if (Object.keys(contextDevices).indexOf($(this).find('DeviceItemID').text()) == -1) return;
-               rp[i] = {
-                  "ID": $(this).find('ID').text(),
-                  "DeviceItemID": $(this).find('DeviceItemID').text(),
-                  "TestHost": contextDevices[$(this).find('DeviceItemID').text()].IP,
-                  "Target": $(this).find('Target').text(),
-                  "Name": $(this).find('Name').text(),
-                  "Description": $(this).find('Description').text(),
-                  "CreateTime": $(this).find('CreateTime').text(),
-                  "IsPolled": $(this).find('IsPolled').text(),
-                  "IsPollEnabled": $(this).find('IsPollEnabled').text(),
-                  "IsFiltered": $(this).find('IsFiltered').text(),
-                  "IsExcludedFromReports": $(this).find('IsExcludedFromReports').text(),
-                  "IsRetired": ($(this).find('Retired').length == 0?"false":"true"),
-                  "IndexList": $(this).find('IndexList').first().text(),
-                  "SourceAddress": $(this).find('SourceAddress').text(),
-                  "Owner": $(this).find('Owner').text(),
-                  "Tag": $(this).find('Tag').text(),
-                  "Threshold": $(this).find('Threshold').text(),
-                  "Frequency": $(this).find('Frequency').text(),
-                  "Timeout": $(this).find('Timeout').text(),
-                  "TypeOfService": $(this).find('TypeOfService').text(),
-                  "VrfName": $(this).find('VrfName').text(),
-                  "Persist": $(this).find('Persist').text(),
-                  "Interval": $(this).find('Interval').text(),
-                  "NumPackets": $(this).find('NumPackets').text(),
-                  "RequestSize": $(this).find('RequestSize').text(),
-                  "ResponseSize": $(this).find('ResponseSize').text(),
-                  "SourcePort": $(this).find('SourcePort').text(),
-                  "TargetPort": $(this).find('TargetPort').text(),
-                  "ControlEnable": $(this).find('ControlEnable').text(),
-                  "CodecType": $(this).find('CodecType').text(),
-                  "CodecInterval": $(this).find('CodecInterval').text(),
-                  "CodecPayload": $(this).find('TargetPayload').text(),
-                  "CodecNumPackets": $(this).find('CodecNumPackets').text(),
-                  "ICPIFAdvFactor": $(this).find('ICPIFAdvFactor').text(),
-                  "NameServer": $(this).find('NameServer').text(),
-                  "Operation": $(this).find('Operation').text(),
-                  "HTTPVersion": $(this).find('HTTPVersion').text(),
-                  "String1": $(this).find('String1').text(),
-                  "String2": $(this).find('String2').text(),
-                  "String3": $(this).find('String3').text(),
-                  "String4": $(this).find('String4').text(),
-                  "String5": $(this).find('String5').text()
-               };
-
-               i++;
-            });
-
             discoveredTests_dt = $('#discoveredTests_table').DataTable( {
                data: rp,
                dom: 'Bfrtipl',
@@ -431,7 +486,7 @@ function display_discovered_tests() {
                   { "data": "IsFiltered", "name": "IsFiltered", "title": "Filtered", "visible": false },
                   { "data": "IsExcludedFromReports", "name": "IsExcludedFromReports", "title": "Excluded From Reports", "visible": false },
                   { "data": "IsRetired", "name": "IsRetired", "title": "Retired", "visible": false },
-                  { "data": "IndexList", "name": "Index", "title": "Index" },
+                  { "data": "IndexList", "name": "IndexList", "title": "Index" },
                   { "data": "Tag", "name": "Tag", "title": "Tag" },
                   { "data": "Owner", "name": "Owner", "title": "Owner" },
                   { "data": "SourceAddress", "name": "SourceAddress", "title": "Source" },
@@ -516,75 +571,122 @@ function display_discovered_tests() {
             discoveredTests_dt.columns(visible_columns).visible(true);
             $("[name='allOrPolled']:checked").trigger("change"); // apply show/hide non-polled
             discoveredTests_dt.draw();
-         },
-         error: function(jqXHR, textStatus, errorThrown) {
-            console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
-         }
-      });
 }
 
+function get_managed_profiles() {
+	// get RTT Profiles from DA
+	// Need to do this in steps to work around DA limiting number of returned xml items
+	$.ajax({
+		url: '/pc/da/rest/rttProfiles/' + testType + '/filtered',
+		processData: false,
+		type: 'POST',
+		data: '<FilterSelect xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="filter.xsd"><Select use="exclude"  isa="exclude"/></FilterSelect>',
+		contentType: 'application/xml',
+		dataType: 'xml',
+		cache: false,
+		success: function( xml ) {
+			profiles_list = [];
+			$(xml).find('ID').each( function() {
+				profiles_list.push(this.innerHTML);
+			});
+			profiles = [];
+			// recursively retrieve all profiles and display them in table
+			get_managed_profiles_collection(profiles_list); 
+		},
+		error: function(jqXHR, textStatus, errorThrown) {
+			console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
+		}
+	});
+}
+
+// get test profiles from DA, 500 at a time.
+function get_managed_profiles_collection(collection) {
+	if (collection.length > 0) {
+		extract = collection.splice(0, 5);
+		filterXml = '\
+		<FilterSelect xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="filter.xsd">\
+                <Filter>\
+                       <IDList>\
+                       	 <ID>'+extract.join('</ID><ID>')+'</ID>\
+                       </IDList>\
+                </Filter>\
+		</FilterSelect>';
+
+		$.ajax({
+			url: '/pc/da/rest/rttProfiles/' + testType + '/filtered',
+	                processData: false,
+                	type: 'POST',
+        	        data: filterXml,
+	                contentType: 'application/xml',
+        	        dataType: 'xml',
+	                cache: false,
+			success: function( xml ) {
+		            $(xml).find(testType+"RoundTripTestProfile").each(function() {
+		               // discard all devices not in context of selected group/device
+		               var found=false;
+		               var aProfile = this;
+		               $.each(contextDevices, function (ID, device) {
+		                  if (device.IPDomainID == $(aProfile).find('IPDomainID').text() && device.IP == $(aProfile).find('TestHost').text()) found=true;
+		               });
+		               if (!found) return;
+		               profiles.push ({
+                		  "ID": $(this).find('ID').text(),
+		                  "IPDomainID": $(this).find('IPDomainID').text(),
+                		  "TestHost": $(this).find('TestHost').text(),
+		                  "TargetAddress": $(this).find('TargetAddress').text(),
+                		  "TargetAddressString": $(this).find('TargetAddressString').text(),
+		                  "Url": $(this).find('Url').text(),
+                		  "ActionType": $(this).find('ActionType').text(),
+		                  "Result": $(this).find('Result').first().text(),
+                		  "Name": $(this).find('Name').text(),
+		                  "ItemID": $(this).find('ItemID').text(),
+		                  "CreateTime": $(this).find('CreateTime').text(),
+		                  "SourceAddress": $(this).find('SourceAddress').text(),
+                		  "Owner": $(this).find('Owner').text(),
+		                  "Tag": $(this).find('Tag').text(),
+                		  "Threshold": $(this).find('Threshold').text(),
+		                  "Frequency": $(this).find('Frequency').text(),
+                		  "Timeout": $(this).find('Timeout').text(),
+		                  "TypeOfService": $(this).find('TypeOfService').text(),
+                		  "VrfName": $(this).find('VrfName').text(),
+		                  "Persist": $(this).find('Persist').text(),
+                		  "Interval": $(this).find('Interval').text(),
+		                  "NumPackets": $(this).find('NumPackets').text(),
+                		  "RequestSize": $(this).find('RequestSize').text(),
+		                  "ResponseSize": $(this).find('ResponseSize').text(),
+                		  "SourcePort": $(this).find('SourcePort').text(),
+		                  "TargetPort": $(this).find('TargetPort').text(),
+                		  "ControlEnable": $(this).find('ControlEnable').text(),
+		                  "CodecType": $(this).find('CodecType').text(),
+                		  "CodecInterval": $(this).find('CodecInterval').text(),
+		                  "CodecPayload": $(this).find('TargetPort').text(),
+                		  "CodecNumPackets": $(this).find('CodecNumPackets').text(),
+		                  "ICPIFAdvFactor": $(this).find('ICPIFAdvFactor').text(),
+                		  "NameServer": $(this).find('NameServer').text(),
+		                  "Operation": $(this).find('Operation').text(),
+                		  "HTTPVersion": $(this).find('HTTPVersion').text(),
+		                  "String1": $(this).find('String1').text(),
+                		  "String2": $(this).find('String2').text(),
+		                  "String3": $(this).find('String3').text(),
+                		  "String4": $(this).find('String4').text(),
+		                  "String5": $(this).find('String5').text()
+		               });
+          		   });
+			   // recursively call this function until all profiles are loaded
+			   get_managed_profiles_collection(collection);				
+			},
+		 	error: function(jqXHR, textStatus, errorThrown) {
+		            console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
+			}
+		});
+	} else {
+		// all profiles loaded, we can now display the table
+		display_managed_profiles();
+	}
+}
+
+// build the datatable for managed profiles, based on already retrieved data
 function display_managed_profiles() {
-      // get RTT Profiles from DA
-      $.ajax({
-         url: '/pc/da/rest/rttProfiles/' + testType,
-         processData: false,
-         dataType: 'xml',
-         cache: false,
-         success: function( xml ) {
-            profiles = [];
-            i=0;
-            $(xml).find(testType+"RoundTripTestProfile").each(function() {
-               // discard all devices not in context of selected group/device
-               var found=false;
-               var aProfile = this;
-               $.each(contextDevices, function (ID, device) {
-                  if (device.IPDomainID == $(aProfile).find('IPDomainID').text() && device.IP == $(aProfile).find('TestHost').text()) found=true;
-               });
-               if (!found) return;
-               profiles[i] = {
-                  "ID": $(this).find('ID').text(),
-                  "IPDomainID": $(this).find('IPDomainID').text(),
-                  "TestHost": $(this).find('TestHost').text(),
-                  "TargetAddress": $(this).find('TargetAddress').text(),
-                  "TargetAddressString": $(this).find('TargetAddressString').text(),
-                  "Url": $(this).find('Url').text(),
-                  "ActionType": $(this).find('ActionType').text(),
-                  "Result": $(this).find('Result').first().text(),
-                  "Name": $(this).find('Name').text(),
-                  "ItemID": $(this).find('ItemID').text(),
-                  "CreateTime": $(this).find('CreateTime').text(),
-                  "SourceAddress": $(this).find('SourceAddress').text(),
-                  "Owner": $(this).find('Owner').text(),
-                  "Tag": $(this).find('Tag').text(),
-                  "Threshold": $(this).find('Threshold').text(),
-                  "Frequency": $(this).find('Frequency').text(),
-                  "Timeout": $(this).find('Timeout').text(),
-                  "TypeOfService": $(this).find('TypeOfService').text(),
-                  "VrfName": $(this).find('VrfName').text(),
-                  "Persist": $(this).find('Persist').text(),
-                  "Interval": $(this).find('Interval').text(),
-                  "NumPackets": $(this).find('NumPackets').text(),
-                  "RequestSize": $(this).find('RequestSize').text(),
-                  "ResponseSize": $(this).find('ResponseSize').text(),
-                  "SourcePort": $(this).find('SourcePort').text(),
-                  "TargetPort": $(this).find('TargetPort').text(),
-                  "ControlEnable": $(this).find('ControlEnable').text(),
-                  "CodecType": $(this).find('CodecType').text(),
-                  "CodecInterval": $(this).find('CodecInterval').text(),
-                  "CodecPayload": $(this).find('TargetPort').text(),
-                  "CodecNumPackets": $(this).find('CodecNumPackets').text(),
-                  "ICPIFAdvFactor": $(this).find('ICPIFAdvFactor').text(),
-                  "NameServer": $(this).find('NameServer').text(),
-                  "Operation": $(this).find('Operation').text(),
-                  "HTTPVersion": $(this).find('HTTPVersion').text(),
-                  "String1": $(this).find('String1').text(),
-                  "String2": $(this).find('String2').text(),
-                  "String3": $(this).find('String3').text(),
-                  "String4": $(this).find('String4').text(),
-                  "String5": $(this).find('String5').text()
-               };
-               i++;
-            });
             managedTests_dt = $('#managedTests_table').DataTable( {
                data: profiles,
                dom: 'Bfrtipl',
@@ -772,12 +874,6 @@ function display_managed_profiles() {
             managedTests_dt.columns(visible_columns).visible(true);
             $("[name='allOrSuccess']:checked").trigger("change"); // apply show/hide errors
             managedTests_dt.draw();
-
-         },
-         error: function(jqXHR, textStatus, errorThrown) {
-            console.log(textStatus + "," + errorThrown + "," + jqXHR.toString());
-         }
-      })
 }
 
 function delete_tests(rows_to_delete, dt) {
@@ -998,7 +1094,7 @@ function validate_profile () {
       }
    });
    
-   if (!error && $("#attr_TargetAddressString:visible").length && $("#attr_TargetAddressString").val().match(/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$|^[A-Za-z0-9._-]$/) == null) error = "Incorrect IP or hostname for Target";
+   if (!error && $("#attr_TargetAddressString:visible").length && $("#attr_TargetAddressString").val().match(/^([0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3})|([A-Za-z0-9._-]*)$/) == null) error = "Incorrect IP or hostname for Target";
    if (!error && $("#attr_Url:visible").length && $("#attr_Url").val().match(/^[Hh][Tt][Tt][Pp][Ss]?:\/\/.+$/) == null) error = "Incorrect format for Target URL: It must start with 'http://' or 'https://'";
    if (!error && $("#attr_TargetAddress:visible").length && $("#attr_TargetAddress").val().match(/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/) == null) error = "Incorrect IP format for Target Address";
    if (!error && $("#attr_SourceAddress:visible").length && $("#attr_SourceAddress:visible").val().length && $("#attr_SourceAddress").val().match(/^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/) == null) error = "Incorrect IP format for Source Address";
